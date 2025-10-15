@@ -1,0 +1,35 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors/IDEs
+.idea/
+.vscode/
+*.code-workspace
+
+# Logs and temp
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+*.tmp
+*.swp
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Coverage / reports
+coverage/
+.nyc_output/
+
+# Node (if added later)
+node_modules/
+
+# Python (if used for tooling)
+__pycache__/
+*.pyc
+
