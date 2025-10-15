@@ -151,6 +151,7 @@ function preloadAssets() {
 const SOUND_MODE = { SFX: "sfx", MUSIC: "music", MUTE: "mute" };
 let soundMode = SOUND_MODE.SFX; // sélection utilisateur (menu): SFX (défaut), MUSIC, MUTE
 let audioEnabled = true;       // dérivé de soundMode != MUTE
+let audioPreloaded = false;    // évite de bloquer le chargement initial
 const AUDIO_LIST = [
   { key: "pbtb", file: "assets/sound2/pbtb.wav" },
   { key: "bombe", file: "assets/sound2/bombe.wav" },
@@ -162,21 +163,21 @@ const AUDIO = Object.create(null); // key -> HTMLAudioElement (source)
 const activeSounds = new Set();
 
 function loadAudio(key, src) {
+  // Ne pas bloquer la page sur le chargement audio
   return new Promise((resolve) => {
     const a = new Audio();
+    a.preload = "none";
     a.src = src;
-    a.preload = "auto";
-    const done = () => resolve(a);
-    a.addEventListener("canplaythrough", done, { once: true });
-    a.addEventListener("error", () => resolve(null), { once: true });
+    resolve(a);
   });
 }
 
 function preloadAudio() {
+  if (audioPreloaded) return Promise.resolve();
   const promises = AUDIO_LIST.map(({ key, file }) =>
     loadAudio(key, file).then((aud) => { AUDIO[key] = aud; })
   );
-  return Promise.all(promises);
+  return Promise.all(promises).then(() => { audioPreloaded = true; });
 }
 
 function playSound(key, { loop = false, durationSec = null, volume = 0.6 } = {}) {
@@ -250,6 +251,8 @@ function onKeyDown(e) {
   if (PREVENT_KEYS.has(key)) e.preventDefault();
   if (e.repeat) return; // éviter répétition auto pour les toggles
   keys[key] = true;
+  // Déclenche le préchargement audio lors de la première interaction
+  if (!audioPreloaded) preloadAudio();
 }
 
 function onKeyUp(e) {
@@ -1258,8 +1261,11 @@ function init() {
   requestAnimationFrame(frame);
 }
 
-// Charger les assets puis init
-Promise.all([preloadAssets(), preloadAudio()]).then(init);
+// Charger d'abord les images pour afficher vite l'UI, l'audio en arrière-plan
+preloadAssets().then(() => {
+  init();
+  setTimeout(() => { preloadAudio(); }, 0);
+});
 
 // Notes d'implémentation (visibles en lecture du code):
 // - Espace virtuel 1280x720 (16:9); le canvas est mis à l'échelle via renderScale.
