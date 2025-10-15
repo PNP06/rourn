@@ -1095,12 +1095,14 @@ function drawLoading() {
 function drawMenu() {
   const modeLabel = soundMode === SOUND_MODE.SFX ? "SFX" : (soundMode === SOUND_MODE.MUSIC ? "Musique" : "Muet");
   drawCenteredText([
-    "Rourn – Duo Catch",
-    "J1: ZQSD | J2: Flèches",
-    "Attrapez les aliments, évitez la bombe !",
+    "RouRn game",
+    "The first Pollito Nene game.",
+    "Objectif: attraper le plus de nourriture.",
+    "Astuce: 10× le même aliment = pouvoirs.",
+    "J1: ZQSD • J2: Flèches",
     "Espace: Démarrer • P: Pause",
     `Son: [1] SFX • [2] Musique • [3] Muet (Actuel: ${modeLabel})`,
-    "Astuce: M pour basculer rapidement",
+    "M: basculer rapidement le mode son",
   ]);
 }
 
