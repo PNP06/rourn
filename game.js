@@ -6,6 +6,27 @@
 // - Contrôles: J1 = ZQSD, J2 = Flèches. P = Pause, Espace = Démarrer, R = Rejouer, Échap = Menu, M = Son.
 
 // -----------------------------
+// Titre de l'onglet avec version
+// -----------------------------
+function setVersionTitle() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const ver = params.get("v");
+    if (ver) {
+      document.title = `RouRn-${ver}`;
+      return;
+    }
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const ts = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+    document.title = `RouRn-${ts}`;
+  } catch (_) {
+    document.title = "RouRn";
+  }
+}
+setVersionTitle();
+
+// -----------------------------
 // Constantes (réglages rapides)
 // -----------------------------
 const VW = 1280;              // Largeur virtuelle (16:9)
