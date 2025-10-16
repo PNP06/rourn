@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 // Jeu 2D HTML5 Canvas – Rourn Duo Catch
 // - Aucune librairie externe, fonctionne en ouvrant index.html
@@ -51,9 +51,11 @@ const HOP_FREQ = 8;           // fréquence des sauts (tacos)
 const BURGER_SCALE = 1.0;     // burger: taille standard (pouvoir modifié en tirs)
 const POULE_MAX_SCALE = 2.5;  // taille maximale de la poule
 const EDGE_TOL = 2;           // tolérance pour coller aux bords (pizza)
-const TACO_SHOT_INTERVAL = 3.0; // tir auto toutes les ~3 s
+const TACO_SHOT_INTERVAL = 4.0; // tir manuel toutes les ~4 s (tacos/burger)
 const TACO_SHOT_SPEED = 180;    // vitesse des projectiles tacos/burger (px/s)
 const MAX_SHOTS = 24;           // sécurité de projectiles simultanés
+const PIZZA_SHOT_INTERVAL = 2.0; // pizza: un tir toutes les ~2 s
+const PIZZA_SHOT_SPEED = 180;    // vitesse des peperoni (px/s)
 const FEED_ICON_W = 32;       // largeur icône du feed (derniers items)
 const FEED_ICON_GAP = 6;      // espacement entre icônes du feed
 const FEED_MAX = 3;           // nombre d'items à afficher dans l'historique
@@ -136,11 +138,8 @@ function loadImage(name, src, placeholderColor = "#888") {
       };
       img.src = url;
     };
-    const candidates = [src];
-    if (src.startsWith("assets/")) {
-      candidates.push("asset/" + src.slice("assets/".length));
-    }
-    attempt(candidates);
+    const toList = (s) => Array.isArray(s) ? s.slice() : [s];
+    attempt(toList(src));
   });
 }
 
@@ -157,12 +156,15 @@ const ASSET_LIST = [
   { key: "rournpizza", file: "rournpizza.png", color: "#d4a373" },
   { key: "rournbrocolis", file: "rournbrocolis.png", color: "#5aa469" },
   { key: "rournburger", file: "rournburger.png", color: "#c9a227" },
-  { key: "tacostomato", file: "tacostomato.png", color: "#c0392b" },
-  { key: "tacossalad", file: "tacossalad.png", color: "#27ae60" },
+  { key: "tacostomato", file: "Tomato.png", color: "#c0392b" },
+  { key: "tacossalad", file: "Salad.png", color: "#27ae60" },
+  { key: "pepperoni", file: "peperoni.png", color: "#b33f2a" },
+  { key: "rourn1ailes", file: "rourn1ailes.png", color: "#8fb9ff" },
+  { key: "rourn2ailes", file: "rourn2ailes.png", color: "#ff8fb9" },
   { key: "rournpoule", file: "rournpoule.png", color: "#deb887" },
   { key: "pizza", file: "pizza.png", color: "#d4a373" },
   { key: "burger", file: "burger.png", color: "#c9a227" },
-  { key: "tacos", file: "tacos.png", color: "#b56576" },
+  { key: "tacos", file: "Tacos.png", color: "#b56576" },
   { key: "brocolis", file: "brocolis.png", color: "#5aa469" },
   { key: "poulet", file: "poulet.png", color: "#ce9461" },
   { key: "bombe", file: "bombe.png", color: "#555" },
@@ -170,16 +172,41 @@ const ASSET_LIST = [
 
 const ASSETS = Object.create(null); // key -> CanvasImageSource
 let assetsLoaded = false;
+let assetLoad = { total: 0, loaded: 0, current: "", errors: [] };
+
+// Variantes de casse utiles (dir conservé, variantes sur le nom)
+function caseVariants(file) {
+  const prefix = ASSET(""); // './assets/'
+  const parts = file.split("/");
+  const name = parts.pop() || "";
+  const dot = name.lastIndexOf(".");
+  const base = dot >= 0 ? name.slice(0, dot) : name;
+  const ext = dot >= 0 ? name.slice(dot) : "";
+  const dir = parts.length ? parts.join("/") + "/" : "";
+  const out = new Set();
+  const add = (n) => out.add(prefix + dir + n);
+  add(name);
+  add(name.toLowerCase());
+  add(name.toUpperCase());
+  const cap = (base.charAt(0).toUpperCase() + base.slice(1).toLowerCase()) + ext.toLowerCase();
+  add(cap);
+  return Array.from(out);
+}
 
 function preloadAssets() {
+  assetLoad.total = ASSET_LIST.length;
+  assetLoad.loaded = 0;
+  assetLoad.current = "";
+  assetLoad.errors = [];
   const promises = ASSET_LIST.map(({ key, file, color }) =>
-    loadImage(key, ASSET(file), color).then((img) => {
+    loadImage(key, caseVariants(file), color).then((img) => {
       ASSETS[key] = img;
+      assetLoad.loaded += 1;
+      assetLoad.current = file;
+      if (img && img.__placeholder) assetLoad.errors.push(file);
     })
   );
-  return Promise.all(promises).then(() => {
-    assetsLoaded = true;
-  });
+  return Promise.all(promises).then(() => { assetsLoaded = true; });
 }
 
 // ---------------------------------
@@ -196,17 +223,16 @@ const AUDIO_LIST = [
   { key: "banana", file: "sound3banana/chickenbanana.mp3" },
   { key: "fartprout", file: "fartprout.mp3" },
 ];
-const AUDIO = Object.create(null); // key -> HTMLAudioElement (source)
+const AUDIO = Object.create(null); // inutilisé désormais, conservé pour compat
+const AUDIO_SOURCES = Object.create(null); // key -> array d'URLs candidates
 const activeSounds = new Set();
 
 function loadAudio(key, src) {
-  // Ne pas bloquer la page sur le chargement audio
-  return new Promise((resolve) => {
-    const a = new Audio();
-    a.preload = "none";
-    a.src = ASSET(src);
-    resolve(a);
-  });
+  // Prépare les variantes de casse et stocke les URLs candidates
+  const variants = caseVariants(src);
+  AUDIO_SOURCES[key] = variants;
+  // Ne crée pas d'élément audio bloquant ici
+  return Promise.resolve(null);
 }
 
 function preloadAudio() {
@@ -219,23 +245,35 @@ function preloadAudio() {
 
 function playSound(key, { loop = false, durationSec = null, volume = 0.6 } = {}) {
   if (!audioEnabled) return null;
-  const src = AUDIO[key];
-  if (!src) return null;
-  const a = src.cloneNode(true);
+  const sources = AUDIO_SOURCES[key];
+  if (!sources || sources.length === 0) return null;
+  const a = new Audio();
+  a.preload = 'none';
   a.loop = loop;
   a.volume = volume;
+  let timer = null;
   const handle = {
     stop() {
       try { a.pause(); a.currentTime = 0; } catch (_) {}
       if (timer) clearTimeout(timer);
       activeSounds.delete(handle);
+      a.src = '';
     }
   };
-  let timer = null;
-  a.play().catch(() => {});
-  if (durationSec && durationSec > 0) {
-    timer = setTimeout(() => handle.stop(), Math.floor(durationSec * 1000));
-  }
+  let idx = 0;
+  const tryPlay = () => {
+    if (idx >= sources.length) { return; }
+    a.src = sources[idx++];
+    a.play().then(() => {
+      if (durationSec && durationSec > 0) {
+        timer = setTimeout(() => handle.stop(), Math.floor(durationSec * 1000));
+      }
+    }).catch(() => {
+      // Essayer la prochaine variante
+      tryPlay();
+    });
+  };
+  tryPlay();
   activeSounds.add(handle);
   return handle;
 }
@@ -272,15 +310,17 @@ function setSoundMode(mode) {
 }
 
 // -----------------------------
+// -----------------------------
 // Input clavier (keydown/keyup)
 // -----------------------------
 const keys = Object.create(null); // état des touches pressées
+const pressedOnce = Object.create(null); // événements one-shot sur keydown
 
 const PREVENT_KEYS = new Set([
   "ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Spacebar",
   "PageUp","PageDown","Home","End",
   // On ajoute nos touches de jeu pour éviter des effets de scroll sur certains OS
-  "z","q","s","d","Z","Q","S","D","p","P","r","R","m","M","Escape"
+  "z","q","s","d","a","A","Z","Q","S","D","p","P","r","R","m","M","e","E","Enter","Escape"
 ]);
 
 function onKeyDown(e) {
@@ -288,9 +328,19 @@ function onKeyDown(e) {
   if (PREVENT_KEYS.has(key)) e.preventDefault();
   if (e.repeat) return; // éviter répétition auto pour les toggles
   keys[key] = true;
+  pressedOnce[key] = true;
   // Déclenche le préchargement audio lors de la première interaction
   if (!audioPreloaded) preloadAudio();
 }
+
+function onKeyUp(e) {
+  const key = e.key;
+  if (PREVENT_KEYS.has(key)) e.preventDefault();
+  keys[key] = false;
+}
+
+window.addEventListener("keydown", onKeyDown, { passive: false });
+window.addEventListener("keyup", onKeyUp, { passive: false });
 
 function onKeyUp(e) {
   const key = e.key;
@@ -322,8 +372,17 @@ class Player {
     this.angle = 0;           // rotation (pizza)
     this.hopPhase = 0;        // phase de saut (tacos)
     this.perimT = null;       // position le long du périmètre (pizza)
-    this.tacoTimer = 0;       // accumulateur pour tirs auto (tacos)
+    this.tacoTimer = 0;       // accumulateur pour tirs auto (tacos/burger)
     this.tacoNextSalad = true;// alterne salade/tomate
+    this.pizzaTimer = 0;      // accumulateur pour tirs auto (pizza)
+    // Effet poulet: apparence et déplacement doux vers le centre
+    this.wingsKey = null;     // 'rourn1ailes' ou 'rourn2ailes'
+    this.moveToCenterElapsed = 0;
+    this.moveToCenterDur = 0;
+    this.moveStartX = 0;
+    this.moveStartY = 0;
+    this.moveTargetX = 0;
+    this.moveTargetY = 0;
   }
   get img() { return ASSETS[this.imgKey]; }
   get w() { return Math.round(PLAYER_BASE_W * this.scale); }
@@ -336,10 +395,10 @@ class Player {
   }
   rect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
   update(dx, dy, dt) {
-    // Ajuster la vitesse selon transformation (brocolis +25%)
+    // Ajuster la vitesse selon transformation (brocolis +35%)
     let sp = this.speed;
     const tf = getPlayerTransform(this);
-    if (tf === "brocolis") sp *= 1.25;
+    if (tf === "brocolis") sp *= 1.35;
     this.x += dx * sp * dt;
     this.y += dy * sp * dt;
     // Pizza: rotation; si hors poulet on utilisera la distance périmètre (gérée après),
@@ -363,7 +422,8 @@ class Player {
     if (this.y + this.h > VH) this.y = VH - this.h;
   }
   draw(g) {
-    const img = this.img;
+    // Image: si effet poulet actif, dessiner la version "ailes" si disponible
+    const img = (this.freeTime > 0 && this.wingsKey && ASSETS[this.wingsKey]) ? ASSETS[this.wingsKey] : this.img;
     if (!img) return;
     const tf = getPlayerTransform(this);
     if (tf === "pizza") {
@@ -419,6 +479,11 @@ const ITEM_TYPES = [
   { key: "bombe",    points: -5, baseSpeed: 220, baseW: 56 }, // piège
 ];
 
+function getItemPoints(key) {
+  const d = ITEM_TYPES.find(t => t.key === key);
+  return d ? d.points : 0;
+}
+
 class Item {
   constructor(typeKey, x) {
     const def = ITEM_TYPES.find(t => t.key === typeKey);
@@ -458,7 +523,10 @@ class Projectile {
     this.vx = vx; this.vy = vy;
   }
   get img() {
-    return ASSETS[this.kind === 'salad' ? 'tacossalad' : 'tacostomato'];
+    if (this.kind === 'salad') return ASSETS['tacossalad'];
+    if (this.kind === 'tomato') return ASSETS['tacostomato'];
+    if (this.kind === 'pepperoni') return ASSETS['pepperoni'];
+    return null;
   }
   rect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
   update(dt) { this.x += this.vx * dt; this.y += this.vy * dt; }
@@ -655,6 +723,8 @@ function makeEmptyStats() {
 function resetGame() {
   p1 = new Player("rourn1", Math.round(VW * 0.25), 0);
   p2 = new Player("rourn2", Math.round(VW * 0.75), 0);
+  p1.wingsKey = 'rourn1ailes';
+  p2.wingsKey = 'rourn2ailes';
   // Placer fermement sur la ligne de base au bas de l'écran
   p1.baseScale = 1; p2.baseScale = 1;
   p1.scale = 1; p2.scale = 1;
@@ -774,47 +844,72 @@ function update(dt) {
   [dx1, dy1] = normalize(dx1, dy1);
   [dx2, dy2] = normalize(dx2, dy2);
 
+  // Décrémenter les cooldowns de tir
+  p1.tacoTimer = Math.max(0, (p1.tacoTimer || 0) - dt);
+  p2.tacoTimer = Math.max(0, (p2.tacoTimer || 0) - dt);
+  p1.pizzaTimer = Math.max(0, (p1.pizzaTimer || 0) - dt);
+  p2.pizzaTimer = Math.max(0, (p2.pizzaTimer || 0) - dt);
+
   p1.update(dx1, dy1, dt);
   p2.update(dx2, dy2, dt);
 
+  // Animation de déplacement vers le centre pendant l'effet poulet (sans téléportation)
+  function applyChickenMove(pl) {
+    if (pl.freeTime > 0 && pl.moveToCenterDur > 0 && pl.moveToCenterElapsed < pl.moveToCenterDur) {
+      pl.moveToCenterElapsed += dt;
+      let t = pl.moveToCenterElapsed / pl.moveToCenterDur;
+      // easing doux (easeOutCubic)
+      t = t >= 1 ? 1 : 1 - Math.pow(1 - t, 3);
+      pl.x = Math.round(pl.moveStartX + (pl.moveTargetX - pl.moveStartX) * t);
+      pl.y = Math.round(pl.moveStartY + (pl.moveTargetY - pl.moveStartY) * t);
+    }
+  }
+  applyChickenMove(p1);
+  applyChickenMove(p2);
+
   // Tacos: tirs automatiques alternés salade/tomate
-  function tryShootFor(player, id) {
+    function tryShootFor(player, id, fire) {
     const tf = getPlayerTransform(player);
-    if (tf !== 'tacos' && tf !== 'burger') return;
-    player.tacoTimer += dt;
-    if (player.tacoTimer >= TACO_SHOT_INTERVAL && shots.length < MAX_SHOTS) {
-      player.tacoTimer -= TACO_SHOT_INTERVAL;
-      const useSalad = player.tacoNextSalad;
-      player.tacoNextSalad = !player.tacoNextSalad;
-      const projImg = ASSETS[useSalad ? 'tacossalad' : 'tacostomato'];
-      const pw = Math.max(4, Math.round(player.w / 3));
-      let ph = pw;
-      if (projImg && projImg.width && projImg.height) ph = Math.max(4, Math.round(pw * (projImg.height / projImg.width)));
-      let sx, sy, vx, vy;
-      if (tf === 'tacos') {
-        // tirs vers le haut
-        sx = Math.round(player.x + player.w / 2 - pw / 2);
-        sy = Math.round(player.y - ph + 4);
-        vx = 0; vy = -TACO_SHOT_SPEED;
-      } else {
-        // burger: tomate → droite, salade → gauche
-        sy = Math.round(player.y + player.h / 2 - ph / 2);
-        if (useSalad) {
-          sx = Math.round(player.x - pw + 4); vx = -TACO_SHOT_SPEED; vy = 0;
-        } else {
-          sx = Math.round(player.x + player.w - 4); vx = TACO_SHOT_SPEED; vy = 0;
-        }
+    if ((tf === "tacos" || tf === "burger") && fire) {
+      if ((player.tacoTimer || 0) <= 0 && shots.length < MAX_SHOTS) {
+        player.tacoTimer = TACO_SHOT_INTERVAL;
+        const useSalad = player.tacoNextSalad;
+        player.tacoNextSalad = !player.tacoNextSalad;
+        const projImg = ASSETS[useSalad ? "tacossalad" : "tacostomato"];
+        const pw = Math.max(4, Math.round(player.w / 3));
+        let ph = pw;
+        if (projImg && projImg.width && projImg.height) ph = Math.max(4, Math.round(pw * (projImg.height / projImg.width)));
+        const sx = Math.round(player.x + player.w / 2 - pw / 2);
+        const sy = Math.round(player.y - ph + 4);
+        const vx = 0, vy = -TACO_SHOT_SPEED;
+        const kind = useSalad ? 'salad' : 'tomato';
+        shots.push(new Projectile(id, kind, sx, sy, pw, ph, vx, vy));
+        if (soundMode === SOUND_MODE.SFX) playSound('fartprout', { volume: 0.6 });
       }
-      shots.push(new Projectile(id, useSalad ? 'salad' : 'tomato', sx, sy, pw, ph, vx, vy));
-      // Son de tir (SFX uniquement)
-      if (soundMode === SOUND_MODE.SFX) {
-        playSound('fartprout', { loop: false, durationSec: null, volume: 0.6 });
+    }
+    if (tf === 'pizza' && fire) {
+      if ((player.pizzaTimer || 0) <= 0 && shots.length < MAX_SHOTS) {
+        player.pizzaTimer = PIZZA_SHOT_INTERVAL;
+        const imgPep = ASSETS['pepperoni'];
+        const pw = Math.max(4, Math.round(player.w / 3));
+        let ph = pw;
+        if (imgPep && imgPep.width && imgPep.height) ph = Math.max(4, Math.round(pw * (imgPep.height / imgPep.width)));
+        const sx = Math.round(player.x + player.w / 2 - pw / 2);
+        const sy = Math.round(player.y + player.h / 2 - ph / 2);
+        const dirs = [ [0,-1], [0,1], [-1,0], [1,0] ];
+        const d = dirs[Math.floor(Math.random()*dirs.length)];
+        const vx = d[0] * PIZZA_SHOT_SPEED;
+        const vy = d[1] * PIZZA_SHOT_SPEED;
+        shots.push(new Projectile(id, 'pepperoni', sx, sy, pw, ph, vx, vy));
+        if (soundMode === SOUND_MODE.SFX) playSound('fartprout', { volume: 0.6 });
       }
     }
   }
 
-  tryShootFor(p1, 1);
-  tryShootFor(p2, 2);
+  const fire1 = !!(keys['a'] || keys['A']);
+  const fire2 = !!(keys['Enter']);
+  tryShootFor(p1, 1, fire1);
+  tryShootFor(p2, 2, fire2);
 
   // Échelle visuelle en fonction des effets (baseScale appliquée d'abord)
   // Si le joueur est en poule, le poulet ne doit PAS changer la taille (pas de CHICKEN_SCALE)
@@ -899,8 +994,11 @@ function update(dt) {
   for (let si = shots.length - 1; si >= 0; si--) {
     const s = shots[si];
     s.update(dt);
-    // hors écran ?
-    if (s.y + s.h < -10) { shots.splice(si, 1); continue; }
+    // hors écran ? (toutes directions)
+    if (s.y + s.h < -10 || s.y > VH + 10 || s.x + s.w < -10 || s.x > VW + 10) {
+      shots.splice(si, 1);
+      continue;
+    }
     // collisions avec items
     let hit = false;
     for (let ii = items.length - 1; ii >= 0; ii--) {
@@ -952,8 +1050,13 @@ function processPickup(playerId, it) {
   // Effets spéciaux
   if (isPoulet) {
     player.freeTime = Math.max(player.freeTime, CHICKEN_FREE_SEC);
-    player.x = Math.max(0, Math.round((VW - player.w) / 2));
-    player.y = Math.max(0, Math.round((VH - player.h) / 2));
+    // Déplacement doux vers le centre (au lieu de téléportation)
+    player.moveToCenterDur = 0.45;
+    player.moveToCenterElapsed = 0;
+    player.moveStartX = player.x;
+    player.moveStartY = player.y;
+    player.moveTargetX = Math.max(0, Math.round((VW - player.w) / 2));
+    player.moveTargetY = Math.max(0, Math.round((VH - player.h) / 2));
     playExclusiveSfx('poulet', { loop: true, durationSec: CHICKEN_FREE_SEC, volume: 0.65 });
     player.chickenStreak = (player.chickenStreak || 0) + 1;
     if (!player.isPoule && !player.hasTransformed && player.chickenStreak >= 3 && ASSETS['rournpoule']) {
@@ -967,6 +1070,9 @@ function processPickup(playerId, it) {
     player.shrinkTime = Math.max(player.shrinkTime, BOMB_SHRINK_SEC);
     playExclusiveSfx('bombe', { loop: false, durationSec: null, volume: 0.7 });
     player.chickenStreak = 0;
+    // Si effet poulet actif, annule immédiatement pour redevenir normal
+    player.freeTime = 0;
+    player.moveToCenterElapsed = player.moveToCenterDur;
   }
   if (!isPoulet && !isBombe) {
     player.chickenStreak = 0;
@@ -1017,7 +1123,7 @@ function render() {
   drawHUD();
 
   // Overlays (menu, pause, game over)
-  if (!assetsLoaded) drawLoading();
+  if (!assetsLoaded) drawLoadingOverlay();
   else if (gameState === STATE.MENU) drawMenu();
   else if (gameState === STATE.PAUSED) drawPause();
   else if (gameState === STATE.OVER) drawGameOver();
@@ -1048,6 +1154,10 @@ function drawHUD() {
   drawFeedLeft();
   drawFeedRight();
 
+  // Live stats (counts per item) under feeds
+  drawLiveStatsLeft();
+  drawLiveStatsRight();
+
   // Indicateur audio discret (coin bas-gauche)
   ctx.textAlign = "left";
   ctx.font = "16px Arial";
@@ -1055,6 +1165,60 @@ function drawHUD() {
   const modeLabel = soundMode === SOUND_MODE.SFX ? "SFX" : (soundMode === SOUND_MODE.MUSIC ? "Musique" : "Muet");
   ctx.fillText(`M: Mode son = ${modeLabel}`, 12, VH - 26);
 
+  ctx.restore();
+}
+
+function drawLiveStatsLeft() {
+  if (!stats1) return;
+  const icon = 18;
+  let x = 16;
+  let y = 110; // pushed lower to avoid overlap with feeds
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.font = "14px Arial";
+  for (const def of ITEM_TYPES) {
+    const key = def.key;
+    const img = ASSETS[key];
+    const count = stats1[key] || 0;
+    if (img) {
+      const ih = Math.max(1, Math.round(icon * (img.height / img.width)));
+      ctx.drawImage(img, x, y - Math.floor(ih/2), icon, ih);
+    } else {
+      ctx.fillStyle = "#334155";
+      ctx.fillRect(x, y - Math.floor(icon/2), icon, icon);
+    }
+    ctx.fillStyle = "#e6f1ff";
+    ctx.fillText(`x${count}`, x + icon + 6, y);
+    y += 18;
+  }
+  ctx.restore();
+}
+
+function drawLiveStatsRight() {
+  if (!stats2) return;
+  const icon = 18;
+  let x = VW - 16;
+  let y = 110; // pushed lower to avoid overlap with feeds
+  ctx.save();
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.font = "14px Arial";
+  for (const def of ITEM_TYPES) {
+    const key = def.key;
+    const img = ASSETS[key];
+    const count = stats2[key] || 0;
+    if (img) {
+      const ih = Math.max(1, Math.round(icon * (img.height / img.width)));
+      ctx.drawImage(img, x - icon, y - Math.floor(ih/2), icon, ih);
+    } else {
+      ctx.fillStyle = "#334155";
+      ctx.fillRect(x - icon, y - Math.floor(icon/2), icon, icon);
+    }
+    ctx.fillStyle = "#e6f1ff";
+    ctx.fillText(`x${count}`, x - icon - 6, y);
+    y += 18;
+  }
   ctx.restore();
 }
 
@@ -1132,18 +1296,174 @@ function drawLoading() {
   ]);
 }
 
+function drawLoadingOverlay() {
+  ctx.save();
+  ctx.fillStyle = "#0b1220";
+  ctx.fillRect(0, 0, VW, VH);
+
+  ctx.fillStyle = "#e6f1ff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.font = "28px Arial";
+  ctx.fillText("Chargement des images", VW/2, 40);
+
+  const pct = assetLoad.total > 0 ? assetLoad.loaded / assetLoad.total : 0;
+  const barW = Math.floor(VW * 0.6);
+  const barH = 22;
+  const barX = Math.floor((VW - barW)/2);
+  const barY = 100;
+  ctx.fillStyle = "#1f2a44";
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.fillStyle = "#4cc9f0";
+  ctx.fillRect(barX, barY, Math.floor(barW * pct), barH);
+  ctx.strokeStyle = "#93a3b3";
+  ctx.strokeRect(barX, barY, barW, barH);
+
+  ctx.font = "18px Arial";
+  ctx.fillStyle = "#cbd5e1";
+  const info = `${assetLoad.loaded}/${assetLoad.total} (${Math.round(pct*100)}%)`;
+  ctx.fillText(info, VW/2, barY + barH + 12);
+  if (assetLoad.current) {
+    ctx.font = "16px Arial";
+    ctx.fillStyle = "#9fb3c8";
+    ctx.fillText(`Fichier: ${assetLoad.current}`, VW/2, barY + barH + 36);
+  }
+
+  // Erreurs en bas
+  ctx.textAlign = "left";
+  ctx.font = "14px monospace";
+  ctx.fillStyle = "#fca5a5";
+  const pad = 16;
+  let y = VH - 140;
+  ctx.fillText("Erreurs de chargement (placeholders):", pad, y);
+  y += 20;
+  if (assetLoad.errors && assetLoad.errors.length) {
+    const maxLines = 5;
+    for (let i=0; i<Math.min(maxLines, assetLoad.errors.length); i++) {
+      ctx.fillText(`- ${assetLoad.errors[i]}`, pad, y);
+      y += 18;
+    }
+    if (assetLoad.errors.length > maxLines) {
+      ctx.fillText(`... (+${assetLoad.errors.length - maxLines} autres)`, pad, y);
+    }
+  } else {
+    ctx.fillStyle = "#94e2b9";
+    ctx.fillText("Aucune erreur détectée", pad, y);
+  }
+  ctx.restore();
+}
+
 function drawMenu() {
   const modeLabel = soundMode === SOUND_MODE.SFX ? "SFX" : (soundMode === SOUND_MODE.MUSIC ? "Musique" : "Muet");
-  drawCenteredText([
-    "RouRn game",
-    "The first Pollito Nene game.",
-    "Objectif: attraper le plus de nourriture.",
+  ctx.save();
+  // Background subtle overlay
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillRect(0, 0, VW, VH);
+
+  // Title
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "#e6f1ff";
+  ctx.font = "36px Arial";
+  ctx.fillText("RouRn game", VW/2, 32);
+  ctx.font = "18px Arial";
+  ctx.fillStyle = "#cbd5e1";
+  ctx.fillText("The first Pollito Nene game.", VW/2, 72);
+
+  // Panels
+  const panelPad = 14;
+  const leftX = Math.floor(VW*0.08);
+  const rightX = Math.floor(VW*0.54);
+  const topY = 120;
+  const panelW = Math.floor(VW*0.38);
+  const panelH = Math.floor(VH*0.60);
+
+  // Left panel: Présentation & Commandes
+  ctx.fillStyle = "rgba(16,24,40,0.85)";
+  ctx.fillRect(leftX, topY, panelW, panelH);
+  ctx.strokeStyle = "#334155";
+  ctx.strokeRect(leftX, topY, panelW, panelH);
+  ctx.fillStyle = "#e6f1ff";
+  ctx.textAlign = "left";
+  ctx.font = "22px Arial";
+  ctx.fillText("Présentation", leftX + panelPad, topY + panelPad);
+  ctx.font = "16px Arial";
+  let ly = topY + panelPad + 26;
+  const lh = 20;
+  const lines = [
+    "Objectif: attraper un maximum d'aliments.",
     "Astuce: 10× le même aliment = pouvoirs.",
-    "J1: ZQSD • J2: Flèches",
-    "Espace: Démarrer • P: Pause",
     `Son: [1] SFX • [2] Musique • [3] Muet (Actuel: ${modeLabel})`,
     "M: basculer rapidement le mode son",
-  ]);
+  ];
+  ctx.fillStyle = "#cbd5e1";
+  for (const L of lines) { ctx.fillText(L, leftX + panelPad, ly); ly += lh; }
+
+  ctx.fillStyle = "#e6f1ff";
+  ctx.font = "22px Arial";
+  ctx.fillText("Commandes", leftX + panelPad, ly + 6);
+  ctx.font = "16px Arial";
+  ctx.fillStyle = "#cbd5e1";
+  ly += 30;
+  const cmds = [
+    "J1: ZQSD (Tir: A)",
+    "J2: Flèches (Tir: Entrée)",
+    "Espace: Démarrer • P: Pause",
+  ];
+  for (const L of cmds) { ctx.fillText(L, leftX + panelPad, ly); ly += lh; }
+
+  // Right panel: Points & Pouvoirs
+  ctx.fillStyle = "rgba(16,24,40,0.85)";
+  ctx.fillRect(rightX, topY, panelW, panelH);
+  ctx.strokeStyle = "#334155";
+  ctx.strokeRect(rightX, topY, panelW, panelH);
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#e6f1ff";
+  ctx.font = "22px Arial";
+  ctx.fillText("Points & Pouvoirs", rightX + panelPad, topY + panelPad);
+  ctx.font = "16px Arial";
+  let ry = topY + panelPad + 30;
+  const icon = 26;
+  const rowGap = 28;
+  const entries = [
+    { key: 'pizza', text: "+3 • Roulage périmètre, tir pepperoni (2s)" },
+    { key: 'burger', text: "+3 • Tir salade/tomate vers le haut (4s)" },
+    { key: 'tacos', text: "+2 • Tir salade/tomate vers le haut (4s)" },
+    { key: 'brocolis', text: "+1 • Vitesse +35%" },
+    { key: 'poulet', text: "+5 • Mouvement libre 5s" },
+    { key: 'bombe', text: "−5 • Rétrécit 5s" },
+  ];
+  for (const ent of entries) {
+    const img = ASSETS[ent.key];
+    if (img) {
+      const ih = Math.max(1, Math.round(icon * (img.height / img.width)));
+      ctx.drawImage(img, rightX + panelPad, ry - Math.floor(ih/2), icon, ih);
+    } else {
+      ctx.fillStyle = "#334155";
+      ctx.fillRect(rightX + panelPad, ry - Math.floor(icon/2), icon, icon);
+    }
+    ctx.fillStyle = "#cbd5e1";
+    ctx.fillText(ent.text, rightX + panelPad + icon + 10, ry);
+    ry += rowGap;
+  }
+
+  // Start hint box (centered)
+  const btnW = Math.floor(VW * 0.44);
+  const btnH = 56;
+  const btnX = Math.floor((VW - btnW) / 2);
+  const btnY = Math.min(VH - 90, topY + panelH + 24);
+  ctx.fillStyle = "rgba(15,23,42,0.9)";
+  ctx.fillRect(btnX, btnY, btnW, btnH);
+  ctx.strokeStyle = "#4cc9f0";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(btnX, btnY, btnW, btnH);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#e6f1ff";
+  ctx.font = "24px Arial";
+  ctx.fillText("Espace pour commencer", btnX + btnW/2, btnY + btnH/2);
+
+  ctx.restore();
 }
 
 function drawPause() {
@@ -1188,11 +1508,12 @@ function drawGameOver() {
     const key = def.key;
     const img = ASSETS[key];
     const count = stats1 ? (stats1[key] || 0) : 0;
+    const pts = getItemPoints(key) * count;
     const iw = iconW;
     const ih = img && img.width && img.height ? Math.round(iw * (img.height / img.width)) : iw;
     if (img) ctx.drawImage(img, xL, y - Math.floor(ih / 2), iw, ih);
     else { ctx.fillRect(xL, y - Math.floor(iw/2), iw, iw); }
-    ctx.fillText(`x${count}`, xL + iw + 8, y);
+    ctx.fillText(`x${count} (${pts >= 0 ? '+' : ''}${pts})`, xL + iw + 8, y);
     y += lineH;
   }
 
@@ -1204,12 +1525,13 @@ function drawGameOver() {
     const key = def.key;
     const img = ASSETS[key];
     const count = stats2 ? (stats2[key] || 0) : 0;
+    const pts = getItemPoints(key) * count;
     const iw = iconW;
     const ih = img && img.width && img.height ? Math.round(iw * (img.height / img.width)) : iw;
     // Icône alignée à droite
     if (img) ctx.drawImage(img, xR - iw, y - Math.floor(ih / 2), iw, ih);
     else { ctx.fillRect(xR - iw, y - Math.floor(iw/2), iw, iw); }
-    ctx.fillText(`x${count}`, xR - iw - 8, y);
+    ctx.fillText(`x${count} (${pts >= 0 ? '+' : ''}${pts})`, xR - iw - 8, y);
     y += lineH;
   }
   ctx.restore();
@@ -1310,8 +1632,16 @@ function startOnce() {
   preloadAssets().catch((e)=>console.error('IMG PRELOAD ERR', e)).then(()=>{});
   preloadAudio().catch((e)=>console.error('AUDIO PRELOAD ERR', e));
 }
-document.addEventListener('click', startOnce, { once: true });
-document.addEventListener('keydown', startOnce, { once: true });
+// Démarrage immédiat sans interaction
+try {
+  started = true;
+  init();
+  preloadAssets().catch((e)=>console.error('IMG PRELOAD ERR', e));
+} catch (_) {
+  // si un souci, fallback sur interaction
+  document.addEventListener('click', startOnce, { once: true });
+  document.addEventListener('keydown', startOnce, { once: true });
+}
 
 // Journalisation utile (erreurs globales)
 window.addEventListener('error', e => console.error('JS ERROR:', e.message, e.filename, e.lineno));
