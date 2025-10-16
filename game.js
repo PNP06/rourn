@@ -87,26 +87,39 @@ resizeCanvas();
 // Astuce: si une image ne charge pas, on génère un placeholder (canvas) coloré.
 function loadImage(name, src, placeholderColor = "#888") {
   return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => {
-      // Fallback: canvas avec le nom de l'asset
-      const ph = document.createElement("canvas");
-      ph.width = 96;
-      ph.height = 96;
-      const pctx = ph.getContext("2d");
-      pctx.fillStyle = placeholderColor;
-      pctx.fillRect(0, 0, ph.width, ph.height);
-      pctx.fillStyle = "#111";
-      pctx.fillRect(3, 3, ph.width - 6, ph.height - 6);
-      pctx.fillStyle = "#fff";
-      pctx.font = "12px Arial";
-      pctx.textAlign = "center";
-      pctx.textBaseline = "middle";
-      pctx.fillText(name, ph.width / 2, ph.height / 2);
-      resolve(ph);
+    const attempt = (pathList) => {
+      if (pathList.length === 0) {
+        // Fallback: canvas avec le nom de l'asset
+        const ph = document.createElement("canvas");
+        ph.width = 96;
+        ph.height = 96;
+        const pctx = ph.getContext("2d");
+        pctx.fillStyle = placeholderColor;
+        pctx.fillRect(0, 0, ph.width, ph.height);
+        pctx.fillStyle = "#111";
+        pctx.fillRect(3, 3, ph.width - 6, ph.height - 6);
+        pctx.fillStyle = "#fff";
+        pctx.font = "12px Arial";
+        pctx.textAlign = "center";
+        pctx.textBaseline = "middle";
+        pctx.fillText(name, ph.width / 2, ph.height / 2);
+        console.warn(`[assets] Échec de chargement image '${name}' via toutes les tentatives`);
+        return resolve(ph);
+      }
+      const url = pathList.shift();
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => {
+        // Essayer variante 'asset/' si on a 'assets/'
+        attempt(pathList);
+      };
+      img.src = url;
     };
-    img.src = src;
+    const candidates = [src];
+    if (src.startsWith("assets/")) {
+      candidates.push("asset/" + src.slice("assets/".length));
+    }
+    attempt(candidates);
   });
 }
 
