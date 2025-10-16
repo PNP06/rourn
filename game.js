@@ -123,25 +123,28 @@ function loadImage(name, src, placeholderColor = "#888") {
   });
 }
 
-// Liste des assets attendus dans le même dossier que index.html
+// Utilitaire de chemin d'assets (relatif depuis index.html)
+const ASSET = (p) => `./assets/${p}`;
+
+// Liste des assets attendus (fichiers dans assets/)
 const ASSET_LIST = [
-  { key: "fond", file: "assets/fond.png", color: "#1b2a41" },
-  { key: "rourn1", file: "assets/rourn1.png", color: "#4461cf" },
-  { key: "rourn2", file: "assets/rourn2.png", color: "#cf4444" },
+  { key: "fond", file: "fond.png", color: "#1b2a41" },
+  { key: "rourn1", file: "rourn1.png", color: "#4461cf" },
+  { key: "rourn2", file: "rourn2.png", color: "#cf4444" },
   // Transformations visuelles des joueurs
-  { key: "rourntacos", file: "assets/rourntacos.png", color: "#b56576" },
-  { key: "rournpizza", file: "assets/rournpizza.png", color: "#d4a373" },
-  { key: "rournbrocolis", file: "assets/rournbrocolis.png", color: "#5aa469" },
-  { key: "rournburger", file: "assets/rournburger.png", color: "#c9a227" },
-  { key: "tacostomato", file: "assets/tacostomato.png", color: "#c0392b" },
-  { key: "tacossalad", file: "assets/tacossalad.png", color: "#27ae60" },
-  { key: "rournpoule", file: "assets/rournpoule.png", color: "#deb887" },
-  { key: "pizza", file: "assets/pizza.png", color: "#d4a373" },
-  { key: "burger", file: "assets/burger.png", color: "#c9a227" },
-  { key: "tacos", file: "assets/tacos.png", color: "#b56576" },
-  { key: "brocolis", file: "assets/brocolis.png", color: "#5aa469" },
-  { key: "poulet", file: "assets/poulet.png", color: "#ce9461" },
-  { key: "bombe", file: "assets/bombe.png", color: "#555" },
+  { key: "rourntacos", file: "rourntacos.png", color: "#b56576" },
+  { key: "rournpizza", file: "rournpizza.png", color: "#d4a373" },
+  { key: "rournbrocolis", file: "rournbrocolis.png", color: "#5aa469" },
+  { key: "rournburger", file: "rournburger.png", color: "#c9a227" },
+  { key: "tacostomato", file: "tacostomato.png", color: "#c0392b" },
+  { key: "tacossalad", file: "tacossalad.png", color: "#27ae60" },
+  { key: "rournpoule", file: "rournpoule.png", color: "#deb887" },
+  { key: "pizza", file: "pizza.png", color: "#d4a373" },
+  { key: "burger", file: "burger.png", color: "#c9a227" },
+  { key: "tacos", file: "tacos.png", color: "#b56576" },
+  { key: "brocolis", file: "brocolis.png", color: "#5aa469" },
+  { key: "poulet", file: "poulet.png", color: "#ce9461" },
+  { key: "bombe", file: "bombe.png", color: "#555" },
 ];
 
 const ASSETS = Object.create(null); // key -> CanvasImageSource
@@ -149,7 +152,7 @@ let assetsLoaded = false;
 
 function preloadAssets() {
   const promises = ASSET_LIST.map(({ key, file, color }) =>
-    loadImage(key, file, color).then((img) => {
+    loadImage(key, ASSET(file), color).then((img) => {
       ASSETS[key] = img;
     })
   );
@@ -166,11 +169,11 @@ let soundMode = SOUND_MODE.SFX; // sélection utilisateur (menu): SFX (défaut),
 let audioEnabled = true;       // dérivé de soundMode != MUTE
 let audioPreloaded = false;    // évite de bloquer le chargement initial
 const AUDIO_LIST = [
-  { key: "pbtb", file: "assets/sound2/pbtb.wav" },
-  { key: "bombe", file: "assets/sound2/bombe.wav" },
-  { key: "poulet", file: "assets/sound2/poulet.wav" },
-  { key: "banana", file: "assets/sound3banana/chickenbanana.mp3" },
-  { key: "fartprout", file: "assets/fartprout.mp3" },
+  { key: "pbtb", file: "sound2/pbtb.wav" },
+  { key: "bombe", file: "sound2/bombe.wav" },
+  { key: "poulet", file: "sound2/poulet.wav" },
+  { key: "banana", file: "sound3banana/chickenbanana.mp3" },
+  { key: "fartprout", file: "fartprout.mp3" },
 ];
 const AUDIO = Object.create(null); // key -> HTMLAudioElement (source)
 const activeSounds = new Set();
@@ -180,7 +183,7 @@ function loadAudio(key, src) {
   return new Promise((resolve) => {
     const a = new Audio();
     a.preload = "none";
-    a.src = src;
+    a.src = ASSET(src);
     resolve(a);
   });
 }
@@ -1274,11 +1277,24 @@ function init() {
   requestAnimationFrame(frame);
 }
 
-// Charger d'abord les images pour afficher vite l'UI, l'audio en arrière-plan
-preloadAssets().then(() => {
+// Démarrage après interaction utilisateur (policy audio/perf)
+let started = false;
+function startOnce() {
+  if (started) return;
+  started = true;
+  console.log('START GAME');
+  // Lancer la boucle et l'UI immédiatement
   init();
-  setTimeout(() => { preloadAudio(); }, 0);
-});
+  // Charger médias en arrière-plan
+  preloadAssets().catch((e)=>console.error('IMG PRELOAD ERR', e)).then(()=>{});
+  preloadAudio().catch((e)=>console.error('AUDIO PRELOAD ERR', e));
+}
+document.addEventListener('click', startOnce, { once: true });
+document.addEventListener('keydown', startOnce, { once: true });
+
+// Journalisation utile (erreurs globales)
+window.addEventListener('error', e => console.error('JS ERROR:', e.message, e.filename, e.lineno));
+window.addEventListener('unhandledrejection', e => console.error('PROMISE REJECTION:', e.reason));
 
 // Notes d'implémentation (visibles en lecture du code):
 // - Espace virtuel 1280x720 (16:9); le canvas est mis à l'échelle via renderScale.
