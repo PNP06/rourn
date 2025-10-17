@@ -317,7 +317,7 @@ const keys = Object.create(null); // état des touches pressées
 const pressedOnce = Object.create(null); // événements one-shot sur keydown
 
 const PREVENT_KEYS = new Set([
-  "ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Spacebar",
+  "ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Spacebar","Space",
   "PageUp","PageDown","Home","End",
   // On ajoute nos touches de jeu pour éviter des effets de scroll sur certains OS
   "z","q","s","d","a","A","Z","Q","S","D","p","P","r","R","m","M","e","E","Enter","Escape"
@@ -332,15 +332,6 @@ function onKeyDown(e) {
   // Déclenche le préchargement audio lors de la première interaction
   if (!audioPreloaded) preloadAudio();
 }
-
-function onKeyUp(e) {
-  const key = e.key;
-  if (PREVENT_KEYS.has(key)) e.preventDefault();
-  keys[key] = false;
-}
-
-window.addEventListener("keydown", onKeyDown, { passive: false });
-window.addEventListener("keyup", onKeyUp, { passive: false });
 
 function onKeyUp(e) {
   const key = e.key;
@@ -375,6 +366,8 @@ class Player {
     this.tacoTimer = 0;       // accumulateur pour tirs auto (tacos/burger)
     this.tacoNextSalad = true;// alterne salade/tomate
     this.pizzaTimer = 0;      // accumulateur pour tirs auto (pizza)
+    this.forms = new Set();   // formes actives (pizza, burger, tacos, brocolis)
+    this.lastForm = null;     // dernière forme attrapée (visuel en dev)
     // Effet poulet: apparence et déplacement doux vers le centre
     this.wingsKey = null;     // 'rourn1ailes' ou 'rourn2ailes'
     this.moveToCenterElapsed = 0;
@@ -397,18 +390,17 @@ class Player {
   update(dx, dy, dt) {
     // Ajuster la vitesse selon transformation (brocolis +35%)
     let sp = this.speed;
-    const tf = getPlayerTransform(this);
-    if (tf === "brocolis") sp *= 1.35;
+    if (hasForm(this, 'brocolis')) sp *= 1.35;
     this.x += dx * sp * dt;
     this.y += dy * sp * dt;
     // Pizza: rotation; si hors poulet on utilisera la distance périmètre (gérée après),
     // sinon on utilise la composante dominante de vitesse
-    if (tf === "pizza" && this.freeTime > 0) {
+    if (hasForm(this, 'pizza') && this.freeTime > 0) {
       const rotVel = (Math.abs(dx) >= Math.abs(dy) ? dx : dy) * sp;
       this.angle += rotVel * dt * 0.12;
     }
     // Tacos: avance de phase (rythme plus marqué si on bouge)
-    if (tf === "tacos") {
+    if (hasForm(this, 'tacos')) {
       const moveFactor = Math.max(0.4, Math.min(1.5, Math.abs(dx) * 1.2));
       this.hopPhase += dt * HOP_FREQ * moveFactor;
     } else {
@@ -567,6 +559,28 @@ function getPlayerTransform(pl) {
   }
 }
 
+function hasForm(pl, key) {
+  if (pl && pl.forms && pl.forms.has(key)) return true;
+  return getPlayerTransform(pl) === key;
+}
+
+function addForm(pl, key) {
+  if (!pl || !key) return;
+  if (!pl.forms) pl.forms = new Set();
+  pl.forms.add(key);
+  pl.lastForm = key;
+  const mapped = TRANSFORM_MAP[key];
+  if (mapped && ASSETS[mapped]) pl.imgKey = mapped;
+}
+
+function setSingleForm(pl, key) {
+  if (!pl || !key) return;
+  pl.forms = new Set([key]);
+  pl.lastForm = key;
+  const mapped = TRANSFORM_MAP[key];
+  if (mapped && ASSETS[mapped]) pl.imgKey = mapped;
+}
+
 function perimeterLength(pl) {
   const w = Math.max(1, VW - pl.w);
   const h = Math.max(1, VH - pl.h);
@@ -710,6 +724,10 @@ let feed2 = []; // derniers items pris par J2 (types)
 let stats1 = null; // compteur par type pour J1
 let stats2 = null; // compteur par type pour J2
 const ALL_ITEM_KEYS = ITEM_TYPES.map(t => t.key);
+
+// Mode développeur (off par défaut)
+let developerMode = false;
+let devToggleRect = { x: 0, y: 0, w: 0, h: 0 };
 
 function makeEmptyStats() {
   const o = Object.create(null);
@@ -867,10 +885,9 @@ function update(dt) {
   applyChickenMove(p1);
   applyChickenMove(p2);
 
-  // Tacos: tirs automatiques alternés salade/tomate
+  // Tirs manuels selon formes actives
     function tryShootFor(player, id, fire) {
-    const tf = getPlayerTransform(player);
-    if ((tf === "tacos" || tf === "burger") && fire) {
+    if ((hasForm(player,'tacos') || hasForm(player,'burger')) && fire) {
       if ((player.tacoTimer || 0) <= 0 && shots.length < MAX_SHOTS) {
         player.tacoTimer = TACO_SHOT_INTERVAL;
         const useSalad = player.tacoNextSalad;
@@ -887,7 +904,7 @@ function update(dt) {
         if (soundMode === SOUND_MODE.SFX) playSound('fartprout', { volume: 0.6 });
       }
     }
-    if (tf === 'pizza' && fire) {
+    if (hasForm(player,'pizza') && fire) {
       if ((player.pizzaTimer || 0) <= 0 && shots.length < MAX_SHOTS) {
         player.pizzaTimer = PIZZA_SHOT_INTERVAL;
         const imgPep = ASSETS['pepperoni'];
@@ -956,11 +973,11 @@ function update(dt) {
 
   // Tacos: sautille (appliquer un offset vertical au repos de baseline)
   // tf1/tf2 déjà calculés ci-dessus
-  if (p1.freeTime <= 0 && tf1 === "tacos") {
+  if (p1.freeTime <= 0 && hasForm(p1, 'tacos')) {
     const hop = Math.max(0, Math.sin(p1.hopPhase)) * HOP_AMP;
     p1.y = p1.baselineY - Math.round(hop);
   }
-  if (p2.freeTime <= 0 && tf2 === "tacos") {
+  if (p2.freeTime <= 0 && hasForm(p2, 'tacos')) {
     const hop = Math.max(0, Math.sin(p2.hopPhase)) * HOP_AMP;
     p2.y = p2.baselineY - Math.round(hop);
   }
@@ -1079,6 +1096,16 @@ function processPickup(playerId, it) {
     if (player.isPoule) {
       player.baseScale = Math.min(POULE_MAX_SCALE, player.baseScale * (1 + POULE_GROWTH_STEP));
     }
+    // Transformations: dev mode instant (sans cumul), sinon règle 10x
+    if (it.type === 'pizza' || it.type === 'burger' || it.type === 'tacos' || it.type === 'brocolis') {
+      if (developerMode) {
+        setSingleForm(player, it.type);
+      } else {
+        // Mode normal: appliquer règle 10x
+        if (playerId === 1) maybeTransformPlayer(p1, stats1, it.type);
+        else maybeTransformPlayer(p2, stats2, it.type);
+      }
+    }
   }
   // Historique & stats
   if (playerId === 1) {
@@ -1165,7 +1192,39 @@ function drawHUD() {
   const modeLabel = soundMode === SOUND_MODE.SFX ? "SFX" : (soundMode === SOUND_MODE.MUSIC ? "Musique" : "Muet");
   ctx.fillText(`M: Mode son = ${modeLabel}`, 12, VH - 26);
 
+  // Dev mode indicator (bottom-right)
+  if (developerMode && gameState === STATE.PLAYING) {
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#9aa1aa";
+    ctx.fillText("DEV ON", VW - 12, VH - 26);
+  }
+
   ctx.restore();
+
+  // Dev toggle label (bottom-right)
+  ctx.save();
+  const label = developerMode ? "Mode dev (D): ON" : "Mode dev (D)";
+  ctx.font = "14px Arial";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "bottom";
+  ctx.fillStyle = "#9aa1aa";
+  const padding = 8;
+  const metricsW = ctx.measureText(label).width;
+  const w = Math.ceil(metricsW + 16);
+  const h = 24;
+  const x = VW - padding - w/2;
+  const y = VH - padding - h/2;
+  // Box background subtle
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(x - w/2, y - h/2, w, h);
+  ctx.strokeStyle = "#334155";
+  ctx.strokeRect(x - w/2, y - h/2, w, h);
+  ctx.fillStyle = "#cbd5e1";
+  ctx.fillText(label, VW - padding - 8, VH - padding - 6);
+  ctx.restore();
+
+  // Update clickable rect in virtual coords
+  devToggleRect = { x: VW - padding - w, y: VH - padding - h, w: w, h: h };
 }
 
 function drawLiveStatsLeft() {
@@ -1543,8 +1602,9 @@ function drawGameOver() {
 function handleToggles() {
   // Menu
   if (gameState === STATE.MENU) {
-    if (keys[" "] || keys["Spacebar"]) { // Espace
+    if (keys[" "] || keys["Spacebar"] || keys["Space"]) { // Espace
       keys[" "] = keys["Spacebar"] = false; // consommer
+      keys["Space"] = false;
       startGame();
       return;
     }
@@ -1605,6 +1665,12 @@ function frame(ts) {
   // Clamp du dt pour éviter de gros sauts si onglet inactif
   dt = Math.min(0.05, Math.max(0, dt));
 
+  // Dev toggle via D on menu
+  if (gameState === STATE.MENU && (keys['d'] || keys['D'])) {
+    keys['d'] = keys['D'] = false;
+    developerMode = !developerMode;
+  }
+
   handleToggles();
   update(dt);
   render();
@@ -1653,3 +1719,23 @@ window.addEventListener('unhandledrejection', e => console.error('PROMISE REJECT
 // - ITEM_TYPES centralise points et vitesses; ajustable facilement.
 // - Difficulté: toutes les 20 s, spawnRate += 0.15 et fallSpeed *= 1.05 (avec caps).
 // - Ordre de dessin: fond → items → joueurs → HUD/overlays.
+
+// Click handler for dev toggle in menu
+(function(){
+  function canvasToVirtual(ev){
+    const rect = canvas.getBoundingClientRect();
+    const scale = rect.width / VW;
+    return {
+      x: (ev.clientX - rect.left) / scale,
+      y: (ev.clientY - rect.top) / scale
+    };
+  }
+  document.addEventListener('click', (ev)=>{
+    if (gameState !== STATE.MENU) return;
+    const p = canvasToVirtual(ev);
+    const r = devToggleRect;
+    if (r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) {
+      developerMode = !developerMode;
+    }
+  }, false);
+})();

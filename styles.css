@@ -1,4 +1,4 @@
-/* Centrage simple de la page et fond neutre */
+﻿/* Centrage simple de la page et fond neutre */
 html, body {
   height: 100%;
 }
@@ -12,7 +12,7 @@ body {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
-/* Le canvas conserve un ratio 4:3 et est centré */
+/* Le canvas conserve un ratio 16:9 (1280×720) et est centré */
 #game {
   display: block;
   max-width: 100vw;
