@@ -173,6 +173,7 @@ const ASSET_LIST = [
 const ASSETS = Object.create(null); // key -> CanvasImageSource
 let assetsLoaded = false;
 let assetLoad = { total: 0, loaded: 0, current: "", errors: [] };
+let audioLoad = { total: 0, loaded: 0, current: "", errors: [] };
 
 // Variantes de casse utiles (dir conservé, variantes sur le nom)
 function caseVariants(file) {
@@ -225,28 +226,57 @@ const AUDIO_LIST = [
 ];
 const AUDIO = Object.create(null); // inutilisé désormais, conservé pour compat
 const AUDIO_SOURCES = Object.create(null); // key -> array d'URLs candidates
+const AUDIO_CACHE = Object.create(null);   // key -> préchargé (Audio) si disponible
 const activeSounds = new Set();
 
 function loadAudio(key, src) {
   // Prépare les variantes de casse et stocke les URLs candidates
   const variants = caseVariants(src);
   AUDIO_SOURCES[key] = variants;
-  // Ne crée pas d'élément audio bloquant ici
-  return Promise.resolve(null);
+  // Tente de précharger en amont (sans lecture) la première variante valide
+  return new Promise((resolve) => {
+    let idx = 0;
+    const a = new Audio();
+    a.preload = 'auto';
+    const tryNext = () => {
+      if (idx >= variants.length) { resolve(null); return; }
+      a.src = variants[idx++];
+      a.load();
+      const done = () => { AUDIO_CACHE[key] = a; cleanup(); resolve(a); };
+      const fail = () => { cleanup(); tryNext(); };
+      const cleanup = () => {
+        a.removeEventListener('canplaythrough', done);
+        a.removeEventListener('loadeddata', done);
+        a.removeEventListener('error', fail);
+      };
+      a.addEventListener('canplaythrough', done, { once: true });
+      a.addEventListener('loadeddata', done, { once: true });
+      a.addEventListener('error', fail, { once: true });
+    };
+    tryNext();
+  });
 }
 
 function preloadAudio() {
   if (audioPreloaded) return Promise.resolve();
+  audioLoad.total = AUDIO_LIST.length;
+  audioLoad.loaded = 0;
+  audioLoad.current = "";
+  audioLoad.errors = [];
   const promises = AUDIO_LIST.map(({ key, file }) =>
-    loadAudio(key, file).then((aud) => { AUDIO[key] = aud; })
+    loadAudio(key, file).then((aud) => {
+      AUDIO[key] = aud;
+      audioLoad.loaded += 1;
+      audioLoad.current = file;
+      if (!aud) audioLoad.errors.push(file);
+    })
   );
   return Promise.all(promises).then(() => { audioPreloaded = true; });
 }
 
 function playSound(key, { loop = false, durationSec = null, volume = 0.6 } = {}) {
   if (!audioEnabled) return null;
-  const sources = AUDIO_SOURCES[key];
-  if (!sources || sources.length === 0) return null;
+  const sources = AUDIO_SOURCES[key] || [];
   const a = new Audio();
   a.preload = 'none';
   a.loop = loop;
@@ -260,20 +290,23 @@ function playSound(key, { loop = false, durationSec = null, volume = 0.6 } = {})
       a.src = '';
     }
   };
+  const cached = AUDIO_CACHE[key];
+  if (cached && (cached.currentSrc || cached.src)) {
+    a.src = cached.currentSrc || cached.src;
+    a.play().catch(() => {});
+    if (durationSec && durationSec > 0) timer = setTimeout(() => handle.stop(), Math.floor(durationSec * 1000));
+    activeSounds.add(handle);
+    return handle;
+  }
   let idx = 0;
   const tryPlay = () => {
     if (idx >= sources.length) { return; }
     a.src = sources[idx++];
     a.play().then(() => {
-      if (durationSec && durationSec > 0) {
-        timer = setTimeout(() => handle.stop(), Math.floor(durationSec * 1000));
-      }
-    }).catch(() => {
-      // Essayer la prochaine variante
-      tryPlay();
-    });
+      if (durationSec && durationSec > 0) timer = setTimeout(() => handle.stop(), Math.floor(durationSec * 1000));
+    }).catch(() => { tryPlay(); });
   };
-  tryPlay();
+  if (sources.length > 0) tryPlay();
   activeSounds.add(handle);
   return handle;
 }
@@ -468,7 +501,7 @@ const ITEM_TYPES = [
   { key: "tacos",    points:  2, baseSpeed: 130, baseW: 56 },
   { key: "brocolis", points:  1, baseSpeed: 110, baseW: 50 },
   { key: "poulet",   points:  5, baseSpeed: 200, baseW: 60 }, // bonus un peu plus grand
-  { key: "bombe",    points: -5, baseSpeed: 220, baseW: 56 }, // piège
+  { key: "bombe",    points: -5, baseSpeed: 220, baseW: 64 }, // piège (légèrement plus grande)
 ];
 
 function getItemPoints(key) {
@@ -503,6 +536,31 @@ class Item {
     const img = this.img;
     if (img) g.drawImage(img, this.x, this.y, this.w, this.h);
   }
+}
+
+// Sélection pondérée des types qui tombent
+// Poulet ~5%, Bombe ~5%, le reste (pizza, burger, tacos, brocolis) se partagent 90% à parts égales (~22.5% chacun)
+const SPAWN_DISTRIBUTION = [
+  { key: 'poulet',   weight: 0.05 },
+  { key: 'bombe',    weight: 0.05 },
+  { key: 'pizza',    weight: 0.225 },
+  { key: 'burger',   weight: 0.225 },
+  { key: 'tacos',    weight: 0.225 },
+  { key: 'brocolis', weight: 0.225 },
+];
+
+function itemDefByKey(key) {
+  return ITEM_TYPES.find(t => t.key === key);
+}
+
+function selectSpawnKey() {
+  let r = Math.random();
+  let acc = 0;
+  for (const e of SPAWN_DISTRIBUTION) {
+    acc += e.weight;
+    if (r < acc) return e.key;
+  }
+  return SPAWN_DISTRIBUTION[SPAWN_DISTRIBUTION.length - 1].key;
 }
 
 // Projectiles envoyés par le tacos
@@ -1047,12 +1105,11 @@ function playItemSound(type) {
 }
 
 function spawnItem() {
-  const def = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
-  const w = Math.max(1, (ASSETS[def.key]?.width) || ITEM_BASE_W);
-  // utiliser la largeur d'affichage prévue (baseW) pour éviter spawn hors bords
-  const baseW = def.baseW || ITEM_BASE_W;
+  const key = selectSpawnKey();
+  const def = itemDefByKey(key);
+  const baseW = def?.baseW || ITEM_BASE_W;
   const x = Math.random() * (VW - baseW);
-  items.push(new Item(def.key, x));
+  items.push(new Item(key, x));
 }
 
 function processPickup(playerId, it) {
@@ -1388,22 +1445,45 @@ function drawLoadingOverlay() {
     ctx.fillText(`Fichier: ${assetLoad.current}`, VW/2, barY + barH + 36);
   }
 
+  // Audio section
+  const apct = audioLoad.total > 0 ? audioLoad.loaded / audioLoad.total : 0;
+  const abarY = barY + 100;
+  ctx.font = "22px Arial";
+  ctx.fillStyle = "#e6f1ff";
+  ctx.fillText("Chargement des sons", VW/2, abarY - 34);
+  ctx.fillStyle = "#1f2a44";
+  ctx.fillRect(barX, abarY, barW, barH);
+  ctx.fillStyle = "#90dbf4";
+  ctx.fillRect(barX, abarY, Math.floor(barW * apct), barH);
+  ctx.strokeStyle = "#93a3b3";
+  ctx.strokeRect(barX, abarY, barW, barH);
+  ctx.font = "18px Arial";
+  ctx.fillStyle = "#cbd5e1";
+  const ainfo = `${audioLoad.loaded}/${audioLoad.total} (${Math.round(apct*100)}%)`;
+  ctx.fillText(ainfo, VW/2, abarY + barH + 12);
+  if (audioLoad.current) {
+    ctx.font = "16px Arial";
+    ctx.fillStyle = "#9fb3c8";
+    ctx.fillText(`Fichier: ${audioLoad.current}`, VW/2, abarY + barH + 36);
+  }
+
   // Erreurs en bas
   ctx.textAlign = "left";
   ctx.font = "14px monospace";
   ctx.fillStyle = "#fca5a5";
   const pad = 16;
   let y = VH - 140;
-  ctx.fillText("Erreurs de chargement (placeholders):", pad, y);
+  ctx.fillText("Erreurs de chargement (images/sons):", pad, y);
   y += 20;
-  if (assetLoad.errors && assetLoad.errors.length) {
+  const allErr = (assetLoad.errors||[]).concat(audioLoad.errors||[]);
+  if (allErr.length) {
     const maxLines = 5;
-    for (let i=0; i<Math.min(maxLines, assetLoad.errors.length); i++) {
-      ctx.fillText(`- ${assetLoad.errors[i]}`, pad, y);
+    for (let i=0; i<Math.min(maxLines, allErr.length); i++) {
+      ctx.fillText(`- ${allErr[i]}`, pad, y);
       y += 18;
     }
-    if (assetLoad.errors.length > maxLines) {
-      ctx.fillText(`... (+${assetLoad.errors.length - maxLines} autres)`, pad, y);
+    if (allErr.length > maxLines) {
+      ctx.fillText(`... (+${allErr.length - maxLines} autres)`, pad, y);
     }
   } else {
     ctx.fillStyle = "#94e2b9";
@@ -1703,6 +1783,7 @@ try {
   started = true;
   init();
   preloadAssets().catch((e)=>console.error('IMG PRELOAD ERR', e));
+  preloadAudio().catch((e)=>console.error('AUDIO PRELOAD ERR', e));
 } catch (_) {
   // si un souci, fallback sur interaction
   document.addEventListener('click', startOnce, { once: true });
