@@ -217,11 +217,11 @@ let soundMode = SOUND_MODE.SFX; // sélection utilisateur (menu): SFX (défaut),
 let audioEnabled = true;       // dérivé de soundMode != MUTE
 let audioPreloaded = false;    // évite de bloquer le chargement initial
 const AUDIO_LIST = [
-  { key: "pbtb", file: "sound2/pbtb.wav" },
-  { key: "bombe", file: "sound2/bombe.wav" },
-  { key: "poulet", file: "sound2/poulet.wav" },
-  { key: "banana", file: "sound3banana/chickenbanana.mp3" },
-  { key: "fartprout", file: "fartprout.mp3" },
+  { key: "pbtb", file: "sound/pbtb.mp3" },
+  { key: "bombe", file: "sound/bombe.mp3" },
+  { key: "poulet", file: "sound/poulet.mp3" },
+  { key: "banana", file: "sound/chickenbanana.mp3" },
+  { key: "fartprout", file: "sound/fartprout.mp3" },
 ];
 const AUDIO = Object.create(null); // inutilisé désormais, conservé pour compat
 const AUDIO_SOURCES = Object.create(null); // key -> array d'URLs candidates
