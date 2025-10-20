@@ -276,7 +276,11 @@ function preloadAudio() {
 
 function playSound(key, { loop = false, durationSec = null, volume = 0.6 } = {}) {
   if (!audioEnabled) return null;
-  const sources = AUDIO_SOURCES[key] || [];
+  let sources = AUDIO_SOURCES[key] || [];
+  if ((!sources || sources.length === 0) && key === 'fartprout' && AUDIO_SOURCES['pbtb']) {
+    console.warn('[audio] fartprout.mp3 introuvable, fallback vers pbtb.mp3');
+    sources = AUDIO_SOURCES['pbtb'];
+  }
   const a = new Audio();
   a.preload = 'none';
   a.loop = loop;
@@ -290,7 +294,7 @@ function playSound(key, { loop = false, durationSec = null, volume = 0.6 } = {})
       a.src = '';
     }
   };
-  const cached = AUDIO_CACHE[key];
+  const cached = AUDIO_CACHE[key] || (key==='fartprout' ? AUDIO_CACHE['pbtb'] : null);
   if (cached && (cached.currentSrc || cached.src)) {
     a.src = cached.currentSrc || cached.src;
     a.play().catch(() => {});
