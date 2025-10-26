@@ -954,16 +954,16 @@ function update(dt) {
     if ((hasForm(player,'tacos') || hasForm(player,'burger')) && fire) {
       if ((player.tacoTimer || 0) <= 0 && shots.length < MAX_SHOTS) {
         player.tacoTimer = TACO_SHOT_INTERVAL;
-        const useSalad = player.tacoNextSalad;
-        player.tacoNextSalad = !player.tacoNextSalad;
-        const projImg = ASSETS[useSalad ? "tacossalad" : "tacostomato"];
+        const cycle = ['tomato','salad','cheese'];
+        const kind = cycle[player.tacoCycleIndex % cycle.length];
+        player.tacoCycleIndex = (player.tacoCycleIndex + 1) % cycle.length;
+        const projImg = kind === 'tomato' ? ASSETS['tacostomato'] : (kind === 'salad' ? ASSETS['tacossalad'] : ASSETS['cheese']);
         const pw = Math.max(4, Math.round(player.w / 3));
         let ph = pw;
         if (projImg && projImg.width && projImg.height) ph = Math.max(4, Math.round(pw * (projImg.height / projImg.width)));
         const sx = Math.round(player.x + player.w / 2 - pw / 2);
         const sy = Math.round(player.y - ph + 4);
         const vx = 0, vy = -TACO_SHOT_SPEED;
-        const kind = useSalad ? 'salad' : 'tomato';
         shots.push(new Projectile(id, kind, sx, sy, pw, ph, vx, vy));
         if (soundMode === SOUND_MODE.SFX) playSound('fartprout', { volume: 0.6 });
       }
