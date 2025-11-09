@@ -107,6 +107,7 @@ resizeCanvas();
 // -----------------------------
 // Gestion des assets (images)
 // -----------------------------
+const DEBUG_ASSETS = true; // Activer des logs détaillés pour le chargement d'images
 // Astuce: si une image ne charge pas, on génère un placeholder (canvas) coloré.
 function loadImage(name, src, placeholderColor = "#888") {
   return new Promise((resolve) => {
@@ -126,12 +127,13 @@ function loadImage(name, src, placeholderColor = "#888") {
         pctx.textAlign = "center";
         pctx.textBaseline = "middle";
         pctx.fillText(name, ph.width / 2, ph.height / 2);
+        try { ph.__placeholder = true; } catch (_) {}
         console.warn(`[assets] Échec de chargement image '${name}' via toutes les tentatives`);
         return resolve(ph);
       }
       const url = pathList.shift();
       const img = new Image();
-      img.onload = () => resolve(img);
+      img.onload = () => { try { if (DEBUG_ASSETS) console.info(`[assets] OK '${name}' from ${url}`); } catch(_){} resolve(img); };
       img.onerror = () => {
         // Essayer variante 'asset/' si on a 'assets/'
         attempt(pathList);
@@ -156,6 +158,8 @@ const ASSET_LIST = [
   { key: "rournpizza", file: "rournpizza.png", color: "#d4a373" },
   { key: "rournbrocolis", file: "rournbrocolis.png", color: "#5aa469" },
   { key: "rournburger", file: "rournburger.png", color: "#c9a227" },
+  // Variantes/monde
+  { key: "rourn-enfer", file: "rourn-enfer.png", color: "#8b0000" },
   { key: "tacostomato", file: "Tomato.png", color: "#c0392b" },
   { key: "tacossalad", file: "Salad.png", color: "#27ae60" },
   { key: "cheese", file: "cheese.png", color: "#ffd166" },
@@ -169,6 +173,11 @@ const ASSET_LIST = [
   { key: "brocolis", file: "brocolis.png", color: "#5aa469" },
   { key: "poulet", file: "poulet.png", color: "#ce9461" },
   { key: "bombe", file: "bombe.png", color: "#555" },
+  // Monde ciel / couteau
+  { key: "angepoulet", file: "angepoulet.png", color: "#f1e9ff" },
+  { key: "etoile", file: "etoile.png", color: "#f5e663" },
+  { key: "couteau", file: "couteau.png", color: "#999" },
+  { key: "braise", file: "braise.png", color: "#ff6b35" },
 ];
 
 const ASSETS = Object.create(null); // key -> CanvasImageSource
@@ -186,7 +195,8 @@ function caseVariants(file) {
   const ext = dot >= 0 ? name.slice(dot) : "";
   const dir = parts.length ? parts.join("/") + "/" : "";
   const out = new Set();
-  const add = (n) => out.add(prefix + dir + n);
+  const addPref = (pref, n) => out.add(pref + dir + n);
+  const add = (n) => { addPref(prefix, n); addPref("assets/", n); addPref("./assets/", n); };
   add(name);
   add(name.toLowerCase());
   add(name.toUpperCase());
@@ -196,6 +206,7 @@ function caseVariants(file) {
 }
 
 function preloadAssets() {
+  try { if (DEBUG_ASSETS) console.info('[assets] Preload start'); } catch(_){}
   assetLoad.total = ASSET_LIST.length;
   assetLoad.loaded = 0;
   assetLoad.current = "";
@@ -205,10 +216,141 @@ function preloadAssets() {
       ASSETS[key] = img;
       assetLoad.loaded += 1;
       assetLoad.current = file;
-      if (img && img.__placeholder) assetLoad.errors.push(file);
+      if (img && img.__placeholder) { assetLoad.errors.push(file); try { if (DEBUG_ASSETS) console.warn('[assets] placeholder for', file); } catch(_){} }
+      else { try { if (DEBUG_ASSETS) console.debug('[assets] loaded', file, 'as', key, img && (img.naturalWidth||img.width), 'x', img && (img.naturalHeight||img.height)); } catch(_){} }
     })
   );
-  return Promise.all(promises).then(() => { assetsLoaded = true; });
+  return Promise.all(promises).then(() => { assetsLoaded = true; try { if (DEBUG_ASSETS) console.info('[assets] Preload done. errors=', assetLoad.errors); } catch(_){} });
+}
+
+// -----------------------------
+// Fonds dynamiques (fond*.png)
+// -----------------------------
+// On cherche automatiquement des fichiers dans assets/ qui commencent par
+// "fond" (ex: fond.png, fond2.png, fond 2.png, ...). On ne peut pas lister
+// le répertoire depuis le navigateur, donc on tente des noms probables.
+
+// Chaque entrée: { img: Image, id: 'classique'|'couteau'|'ciel'|'enfer'|'espace'|null }
+let bgImages = [];      // commence par fond.png si présent
+let bgIndex = 0;        // index courant dans bgImages
+
+// Propriétés du monde courant (dérivées du fond)
+let worldId = 'classique';
+let worldPlayerSpeedMult = 1.0;
+let worldPlayerScaleMult = 1.0;
+let worldFallMult = 1.0; // chute des items
+let worldAllowAllDirs = false; // autoriser déplacements verticaux hors poulet
+let worldOverridePlayerImgKey = null; // ex: 'rourn-enfer'
+let worldKnifeSpawnRate = 0; // couteaux / sec additionnels
+let worldBraiseSpawnRate = 0; // braises / sec additionnelles (enfer)
+
+// Sélection de monde par le joueur (menu)
+// 'multi' = comportement actuel (alternance sur bombe)
+let fixedWorldMode = 'multi';
+const WORLD_OPTIONS = ['multi','enfer','ciel','espace','cuisine','palmier'];
+function cycleFixedWorld() {
+  const i = WORLD_OPTIONS.indexOf(fixedWorldMode);
+  fixedWorldMode = WORLD_OPTIONS[(i + 1) % WORLD_OPTIONS.length];
+}
+
+function setWorldFromId(id) {
+  worldId = id || 'classique';
+  worldPlayerSpeedMult = 1.0;
+  worldPlayerScaleMult = 1.0;
+  worldFallMult = 1.0;
+  worldAllowAllDirs = false;
+  worldOverridePlayerImgKey = null;
+  worldKnifeSpawnRate = 0;
+  worldBraiseSpawnRate = 0;
+  // Réinitialiser les accumulateurs de spawns spéciaux pour éviter des à-coups
+  try { update.knifeAcc = 0; } catch (_) {}
+  try { update.braiseAcc = 0; } catch (_) {}
+  if (worldId === 'enfer') {
+    worldPlayerScaleMult = 1.25;
+    worldOverridePlayerImgKey = 'rourn-enfer';
+    worldBraiseSpawnRate = 1.0;
+  } else if (worldId === 'espace') {
+    worldAllowAllDirs = true;
+    worldPlayerSpeedMult = 0.75;
+    worldFallMult = 0.8;
+  } else if (worldId === 'ciel') {
+    // remapping poulet -> angepoulet géré au spawn, chute normale
+  } else if (worldId === 'couteau') {
+    worldKnifeSpawnRate = 1.0; // moins de couteaux (jouable)
+  }
+}
+
+function inferWorldIdFromName(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('fond-couteau')) return 'couteau';
+  if (n.includes('fond-ciel')) return 'ciel';
+  if (n.includes('fond-enfer')) return 'enfer';
+  if (n.includes('fond-espace')) return 'espace';
+  if (n.includes('fond-cuisine')) return 'cuisine';
+  if (n.includes('fond-palmier')) return 'palmier';
+  if (n.includes('fond-classique')) return 'classique';
+  return 'classique';
+}
+
+function tryLoadExact(urls) {
+  return new Promise((resolve) => {
+    const list = Array.isArray(urls) ? urls : [urls];
+    let i = 0;
+    const attempt = () => {
+      if (i >= list.length) { resolve(null); return; }
+      const img = new Image();
+      const u = list[i];
+      img.onload = () => { try { if (DEBUG_ASSETS) console.info(`[assets] BG OK from ${u}`); } catch(_){} resolve(img); };
+      img.onerror = () => { try { if (DEBUG_ASSETS) console.warn(`[assets] BG FAIL on ${u}`); } catch(_){} i++; attempt(); };
+      img.src = u;
+    };
+    attempt();
+  });
+}
+
+async function discoverBackgrounds(maxN = 50) {
+  const candidates = [
+    'fond.png',
+    // variantes par numéro
+    ...Array.from({ length: maxN - 1 }, (_, i) => `fond${i + 2}.png`),
+    ...Array.from({ length: maxN - 1 }, (_, i) => `fond ${i + 2}.png`),
+    // variantes par thème
+    'fond-classique.png','fond-couteau.png','fond-ciel.png','fond-enfer.png','fond-espace.png','fond-cuisine.png','fond-palmier.png'
+  ];
+  const found = [];
+  for (const name of candidates) {
+    const urls = caseVariants(name);
+    const img = await tryLoadExact(urls);
+    if (img) {
+      found.push({ img, id: inferWorldIdFromName(name) });
+    }
+  }
+  try { if (DEBUG_ASSETS) console.info('[assets] BG found:', found.map(f=>f.id)); } catch(_){}
+  if (found.length === 0 && ASSETS['fond']) {
+    bgImages = [{ img: ASSETS['fond'], id: 'classique' }];
+  } else {
+    bgImages = found;
+  }
+  // Choisir le fond initial selon le mode fixé
+  if (fixedWorldMode !== 'multi') {
+    const idx = Math.max(0, bgImages.findIndex(e => e.id === fixedWorldMode));
+    bgIndex = idx >= 0 ? idx : 0;
+    setWorldFromId(bgImages[bgIndex]?.id || 'classique');
+  } else {
+    bgIndex = 0;
+    setWorldFromId(bgImages[0]?.id || 'classique');
+  }
+}
+
+function nextBackground() {
+  if (!bgImages || bgImages.length <= 1) return;
+  bgIndex = (bgIndex + 1) % bgImages.length;
+  setWorldFromId(bgImages[bgIndex]?.id || 'classique');
+}
+
+function getCurrentBackgroundImage() {
+  if (bgImages && bgImages.length > 0) return bgImages[bgIndex].img;
+  return ASSETS['fond']; // fallback tant que la découverte n'a pas terminé
 }
 
 // ---------------------------------
@@ -220,6 +362,7 @@ let audioEnabled = true;       // dérivé de soundMode != MUTE
 let audioPreloaded = false;    // évite de bloquer le chargement initial
 const AUDIO_LIST = [
   { key: "pbtb", file: "sound/pbtb.mp3" },
+  { key: "pbtb2", file: "sound/pbtprourn2.mp3" },
   { key: "bombe", file: "sound/bombe.mp3" },
   { key: "poulet", file: "sound/poulet.mp3" },
   { key: "banana", file: "sound/chickenbanana.mp3" },
@@ -414,6 +557,8 @@ class Player {
     this.moveStartY = 0;
     this.moveTargetX = 0;
     this.moveTargetY = 0;
+    // Boost de vitesse temporaire (étoile)
+    this.speedBoostTime = 0;  // secondes restantes
   }
   get img() { return ASSETS[this.imgKey]; }
   get w() { return Math.round(PLAYER_BASE_W * this.scale); }
@@ -429,6 +574,10 @@ class Player {
     // Ajuster la vitesse selon transformation (brocolis +35%)
     let sp = this.speed;
     if (hasForm(this, 'brocolis')) sp *= 1.35;
+    // Modificateur de monde (ex: espace plus lent)
+    sp *= (typeof worldPlayerSpeedMult === 'number' ? worldPlayerSpeedMult : 1);
+    // Boost étoile
+    if ((this.speedBoostTime || 0) > 0) sp *= 3;
     this.x += dx * sp * dt;
     this.y += dy * sp * dt;
     // Pizza: rotation; si hors poulet on utilisera la distance périmètre (gérée après),
@@ -453,20 +602,34 @@ class Player {
   }
   draw(g) {
     // Image: si effet poulet actif, dessiner la version "ailes" si disponible
-    const img = (this.freeTime > 0 && this.wingsKey && ASSETS[this.wingsKey]) ? ASSETS[this.wingsKey] : this.img;
+    let baseImg = this.img;
+    if (worldOverridePlayerImgKey && ASSETS[worldOverridePlayerImgKey]) baseImg = ASSETS[worldOverridePlayerImgKey];
+    const img = (this.freeTime > 0 && this.wingsKey && ASSETS[this.wingsKey]) ? ASSETS[this.wingsKey] : baseImg;
     if (!img) return;
     const tf = getPlayerTransform(this);
     if (tf === "pizza") {
       // Dessin avec rotation autour du centre
       g.save();
-      const cx = this.x + this.w / 2;
-      const cy = this.y + this.h / 2;
+      let jitterX = 0, jitterY = 0;
+      if ((this.paralyzeTime||0) > 0) {
+        const t = (typeof elapsed === 'number' ? elapsed : performance.now()/1000);
+        jitterX = Math.sin(t * 40) * 2;
+        jitterY = Math.cos(t * 50) * 2;
+      }
+      const cx = this.x + this.w / 2 + jitterX;
+      const cy = this.y + this.h / 2 + jitterY;
       g.translate(cx, cy);
       g.rotate(this.angle);
       g.drawImage(img, -this.w / 2, -this.h / 2, this.w, this.h);
       g.restore();
     } else {
+      g.save();
+      if ((this.paralyzeTime||0) > 0) {
+        const t = (typeof elapsed === 'number' ? elapsed : performance.now()/1000);
+        g.translate(Math.sin(t * 40) * 2, Math.cos(t * 50) * 2);
+      }
       g.drawImage(img, this.x, this.y, this.w, this.h);
+      g.restore();
     }
   }
 }
@@ -506,7 +669,11 @@ const ITEM_TYPES = [
   { key: "tacos",    points:  2, baseSpeed: 130, baseW: 56 },
   { key: "brocolis", points:  1, baseSpeed: 110, baseW: 50 },
   { key: "poulet",   points:  5, baseSpeed: 200, baseW: 60 }, // bonus un peu plus grand
+  { key: "angepoulet", points: 5, baseSpeed: 120, baseW: 90 }, // poulet céleste, plus grand, chute douce
+  { key: "etoile",  points:  1, baseSpeed: 160, baseW: 48 }, // bonus vitesse temporaire
+  { key: "braise",  points:  0, baseSpeed: 200, baseW: 52 }, // braise (enfer), chute verticale
   { key: "bombe",    points: -5, baseSpeed: 220, baseW: 64 }, // piège (légèrement plus grande)
+  { key: "couteau",  points:  0, baseSpeed: 260, baseW: 54 }, // dangereux, mouvement diagonal
 ];
 
 function getItemPoints(key) {
@@ -524,6 +691,18 @@ class Item {
     this.x = x;
     this.y = -this.h; // démarre juste au-dessus
     this.variation = 0.9 + Math.random() * 0.2; // petite variation de vitesse
+    // Vitesse personnalisée (utilisée pour le monde espace ou certains items)
+    this.vx = 0;
+    this.vy = 0;
+    this.customVel = false;
+    // Spécificités par type
+    this.angle = 0;
+    this.angVel = 0;
+    if (this.type === 'couteau') {
+      const dir = Math.random() < 0.5 ? -1 : 1;
+      this.vx = dir * (this.baseSpeed * 0.6);
+      this.angVel = dir * (3 + Math.random() * 2); // rad/s
+    }
   }
   get img() { return ASSETS[this.type]; }
   get w() { return this.baseW; }
@@ -534,24 +713,43 @@ class Item {
   }
   rect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
   update(dt, speedMult) {
-    const vy = this.baseSpeed * this.variation * speedMult;
-    this.y += vy * dt;
+    if (this.customVel) {
+      this.x += this.vx * speedMult * dt;
+      this.y += this.vy * speedMult * dt;
+    } else {
+      const vy = this.baseSpeed * this.variation * speedMult;
+      this.y += vy * dt;
+      this.x += this.vx * dt;
+    }
+    if (this.angVel) this.angle += this.angVel * dt;
   }
   draw(g) {
     const img = this.img;
-    if (img) g.drawImage(img, this.x, this.y, this.w, this.h);
+    if (!img) return;
+    if (this.angVel) {
+      // Dessin avec rotation (couteau)
+      g.save();
+      const cx = this.x + this.w / 2;
+      const cy = this.y + this.h / 2;
+      g.translate(cx, cy);
+      g.rotate(this.angle);
+      g.drawImage(img, -this.w / 2, -this.h / 2, this.w, this.h);
+      g.restore();
+    } else {
+      g.drawImage(img, this.x, this.y, this.w, this.h);
+    }
   }
 }
 
 // Sélection pondérée des types qui tombent
-// Poulet ~5%, Bombe ~5%, le reste (pizza, burger, tacos, brocolis) se partagent 90% à parts égales (~22.5% chacun)
+// Poulet ~5%, Bombe ~15% (augmenté), le reste se partagent 80% à parts égales (~20% chacun)
 const SPAWN_DISTRIBUTION = [
   { key: 'poulet',   weight: 0.05 },
-  { key: 'bombe',    weight: 0.05 },
-  { key: 'pizza',    weight: 0.225 },
-  { key: 'burger',   weight: 0.225 },
-  { key: 'tacos',    weight: 0.225 },
-  { key: 'brocolis', weight: 0.225 },
+  { key: 'bombe',    weight: 0.15 },
+  { key: 'pizza',    weight: 0.20 },
+  { key: 'burger',   weight: 0.20 },
+  { key: 'tacos',    weight: 0.20 },
+  { key: 'brocolis', weight: 0.20 },
 ];
 
 function itemDefByKey(key) {
@@ -840,6 +1038,12 @@ function resetGame() {
 
 function startGame() {
   resetGame();
+  // Si un monde est fixé, appliquer le fond et les règles correspondantes
+  if (fixedWorldMode !== 'multi') {
+    const idx = Math.max(0, bgImages.findIndex(e => e.id === fixedWorldMode));
+    if (idx >= 0) { bgIndex = idx; setWorldFromId(bgImages[bgIndex]?.id); }
+    else { setWorldFromId(fixedWorldMode); }
+  }
   gameState = STATE.PLAYING;
 }
 
@@ -899,6 +1103,12 @@ function update(dt) {
   p2.freeTime = Math.max(0, p2.freeTime - dt);
   p1.shrinkTime = Math.max(0, p1.shrinkTime - dt);
   p2.shrinkTime = Math.max(0, p2.shrinkTime - dt);
+  p1.paralyzeTime = Math.max(0, (p1.paralyzeTime || 0) - dt);
+  p2.paralyzeTime = Math.max(0, (p2.paralyzeTime || 0) - dt);
+  p1.speedBoostTime = Math.max(0, (p1.speedBoostTime || 0) - dt);
+  p2.speedBoostTime = Math.max(0, (p2.speedBoostTime || 0) - dt);
+  p1.giantTime = Math.max(0, (p1.giantTime || 0) - dt);
+  p2.giantTime = Math.max(0, (p2.giantTime || 0) - dt);
 
   // En mode normal (pas poulet): par défaut horizontal uniquement.
   // Spécial pizza: gauche/droite contrôlent le déplacement le long du bord (périmètre).
@@ -911,7 +1121,7 @@ function update(dt) {
       s1 = Math.sign(dx1);
       dx1 = 0; dy1 = 0; // on gèrera le déplacement périmètre après update
     } else {
-      dy1 = 0;
+      if (!worldAllowAllDirs) dy1 = 0;
     }
   }
   if (p2.freeTime <= 0) {
@@ -919,9 +1129,13 @@ function update(dt) {
       s2 = Math.sign(dx2);
       dx2 = 0; dy2 = 0;
     } else {
-      dy2 = 0;
+      if (!worldAllowAllDirs) dy2 = 0;
     }
   }
+
+  // Paralysie: empêche les déplacements actifs (y compris pizza périmètre)
+  if ((p1.paralyzeTime||0) > 0) { dx1 = 0; dy1 = 0; s1 = 0; }
+  if ((p2.paralyzeTime||0) > 0) { dx2 = 0; dy2 = 0; s2 = 0; }
 
   [dx1, dy1] = normalize(dx1, dy1);
   [dx2, dy2] = normalize(dx2, dy2);
@@ -998,8 +1212,8 @@ function update(dt) {
   const tf2 = getPlayerTransform(p2);
   const burgerFactor1 = (tf1 === 'burger') ? BURGER_SCALE : 1;
   const burgerFactor2 = (tf2 === 'burger') ? BURGER_SCALE : 1;
-  p1.scale = p1.baseScale * burgerFactor1 * ((p1.freeTime > 0 && !p1.isPoule) ? CHICKEN_SCALE : 1) * (p1.shrinkTime > 0 ? BOMB_SHRINK_SCALE : 1);
-  p2.scale = p2.baseScale * burgerFactor2 * ((p2.freeTime > 0 && !p2.isPoule) ? CHICKEN_SCALE : 1) * (p2.shrinkTime > 0 ? BOMB_SHRINK_SCALE : 1);
+  p1.scale = p1.baseScale * worldPlayerScaleMult * (p1.giantTime > 0 ? 4 : 1) * burgerFactor1 * ((p1.freeTime > 0 && !p1.isPoule) ? CHICKEN_SCALE : 1) * (p1.shrinkTime > 0 ? BOMB_SHRINK_SCALE : 1);
+  p2.scale = p2.baseScale * worldPlayerScaleMult * (p2.giantTime > 0 ? 4 : 1) * burgerFactor2 * ((p2.freeTime > 0 && !p2.isPoule) ? CHICKEN_SCALE : 1) * (p2.shrinkTime > 0 ? BOMB_SHRINK_SCALE : 1);
 
   // Calcul dynamique de la baseline (selon la hauteur actuelle)
   p1.baselineY = Math.round(VH - p1.h - BASELINE_MARGIN);
@@ -1008,8 +1222,10 @@ function update(dt) {
   // Forcer/faire tomber à la ligne de base si pas de mouvement libre
   if (p1.freeTime <= 0) {
     if (!p1IsPizza) {
-      if (p1.y < p1.baselineY) p1.y = Math.min(p1.baselineY, p1.y + FALL_SPEED * dt);
-      else p1.y = p1.baselineY;
+      if (!worldAllowAllDirs) {
+        if (p1.y < p1.baselineY) p1.y = Math.min(p1.baselineY, p1.y + FALL_SPEED * dt);
+        else p1.y = p1.baselineY;
+      }
     } else {
       // Déplacement périmètre piloté par s1
       if (p1.perimT == null) p1.perimT = projectPerimeterT(p1);
@@ -1023,8 +1239,10 @@ function update(dt) {
   }
   if (p2.freeTime <= 0) {
     if (!p2IsPizza) {
-      if (p2.y < p2.baselineY) p2.y = Math.min(p2.baselineY, p2.y + FALL_SPEED * dt);
-      else p2.y = p2.baselineY;
+      if (!worldAllowAllDirs) {
+        if (p2.y < p2.baselineY) p2.y = Math.min(p2.baselineY, p2.y + FALL_SPEED * dt);
+        else p2.y = p2.baselineY;
+      }
     } else {
       if (p2.perimT == null) p2.perimT = projectPerimeterT(p2);
       const dist = s2 * p2.speed * dt;
@@ -1037,11 +1255,11 @@ function update(dt) {
 
   // Tacos: sautille (appliquer un offset vertical au repos de baseline)
   // tf1/tf2 déjà calculés ci-dessus
-  if (p1.freeTime <= 0 && hasForm(p1, 'tacos')) {
+  if (p1.freeTime <= 0 && !worldAllowAllDirs && hasForm(p1, 'tacos')) {
     const hop = Math.max(0, Math.sin(p1.hopPhase)) * HOP_AMP;
     p1.y = p1.baselineY - Math.round(hop);
   }
-  if (p2.freeTime <= 0 && hasForm(p2, 'tacos')) {
+  if (p2.freeTime <= 0 && !worldAllowAllDirs && hasForm(p2, 'tacos')) {
     const hop = Math.max(0, Math.sin(p2.hopPhase)) * HOP_AMP;
     p2.y = p2.baselineY - Math.round(hop);
   }
@@ -1055,20 +1273,47 @@ function update(dt) {
     }
   }
 
+  // Spawns additionnels spécifiques au monde (ex: couteaux)
+  if (worldKnifeSpawnRate > 0) {
+    if (typeof update.knifeAcc !== 'number') update.knifeAcc = 0;
+    update.knifeAcc += dt * worldKnifeSpawnRate;
+    let guard = 0;
+    while (update.knifeAcc >= 1 && items.length < MAX_ITEMS) {
+      update.knifeAcc -= 1;
+      spawnKnife();
+      if (++guard > 10) { update.knifeAcc = 0; break; }
+    }
+  }
+  // Spawns additionnels: braises (enfer)
+  if (worldBraiseSpawnRate > 0) {
+    if (typeof update.braiseAcc !== 'number') update.braiseAcc = 0;
+    update.braiseAcc += dt * worldBraiseSpawnRate;
+    let guard2 = 0;
+    while (update.braiseAcc >= 1 && items.length < MAX_ITEMS) {
+      update.braiseAcc -= 1;
+      spawnBraise();
+      if (++guard2 > 10) { update.braiseAcc = 0; break; }
+    }
+  }
+
   // Items update + collisions + nettoyage
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
-    it.update(dt, speedMult);
+    it.update(dt, speedMult * worldFallMult);
 
     const r = it.rect();
-    // Attrapé par J1 ? (burger: plus de zone élargie, on utilise juste la taille accrue)
-    if (intersects(p1.rect(), r)) { processPickup(1, it); items.splice(i, 1); continue; }
-    // Attrapé par J2 ? (burger: plus de zone élargie, on utilise juste la taille accrue)
-    if (intersects(p2.rect(), r)) { processPickup(2, it); items.splice(i, 1); continue; }
-    // Sorti de l'écran ? (pas de pénalité)
-    if (it.y > VH + 10) {
-      items.splice(i, 1);
+    // Collisions avec joueurs (couteau est nocif)
+    if (intersects(p1.rect(), r)) {
+      if (it.type === 'couteau') { p1.paralyzeTime = Math.max(p1.paralyzeTime || 0, 3.0); items.splice(i, 1); continue; }
+      processPickup(1, it); items.splice(i, 1); continue;
     }
+    if (intersects(p2.rect(), r)) {
+      if (it.type === 'couteau') { p2.paralyzeTime = Math.max(p2.paralyzeTime || 0, 3.0); items.splice(i, 1); continue; }
+      processPickup(2, it); items.splice(i, 1); continue;
+    }
+    // Sorti de l'écran ? (toutes directions)
+    const oob = (it.y > VH + 10) || (it.y + it.h < -10) || (it.x + it.w < -10) || (it.x > VW + 10);
+    if (oob) items.splice(i, 1);
   }
 
   // Projectiles update + collisions avec items
@@ -1095,11 +1340,12 @@ function update(dt) {
   }
 }
 
-function playItemSound(type) {
+function playItemSound(type, playerId = 0) {
   if (soundMode !== SOUND_MODE.SFX) return; // en mode musique ou muet, pas de SFX
   // pbtb.wav pour pizza/brocolis/burger/tacos
   if (type === "pizza" || type === "brocolis" || type === "burger" || type === "tacos") {
-    playSound("pbtb", { loop: false, durationSec: null, volume: 0.7 });
+    const key = (playerId === 2) ? "pbtb2" : "pbtb";
+    playSound(key, { loop: false, durationSec: null, volume: 0.7 });
     return;
   }
   if (type === "bombe") {
@@ -1111,22 +1357,74 @@ function playItemSound(type) {
 }
 
 function spawnItem() {
-  const key = selectSpawnKey();
+  let key = selectSpawnKey();
+  if (worldId === 'ciel' && key === 'poulet') key = 'angepoulet';
+  if (worldId === 'enfer' && Math.random() < 0.20) key = 'braise';
+  if (worldId === 'espace') {
+    // En espace, injecter parfois une étoile à la place de l'item choisi
+    if (Math.random() < 0.15) key = 'etoile';
+    spawnItemSpace(key);
+    return;
+  }
   const def = itemDefByKey(key);
   const baseW = def?.baseW || ITEM_BASE_W;
   const x = Math.random() * (VW - baseW);
   items.push(new Item(key, x));
 }
 
+function spawnKnife() {
+  const def = itemDefByKey('couteau');
+  const baseW = def?.baseW || ITEM_BASE_W;
+  const x = Math.random() * (VW - baseW);
+  items.push(new Item('couteau', x));
+}
+
+function spawnItemSpace(key) {
+  // Crée un item qui entre depuis un bord aléatoire avec une trajectoire aléatoire vers l'intérieur
+  const def = itemDefByKey(key);
+  const baseW = def?.baseW || ITEM_BASE_W;
+  // Position de départ provisoire (ajustée ensuite selon le bord)
+  let it = new Item(key, Math.random() * (VW - baseW));
+  const side = Math.floor(Math.random() * 4); // 0 top, 1 bottom, 2 left, 3 right
+  const deg2rad = (d) => d * Math.PI / 180;
+  let ang = 0;
+  if (side === 0) {
+    // Depuis le haut vers le bas
+    it.x = Math.random() * (VW - it.w);
+    it.y = -it.h;
+    ang = deg2rad(20 + Math.random() * 140); // 20°..160° (sin>0)
+  } else if (side === 1) {
+    // Depuis le bas vers le haut
+    it.x = Math.random() * (VW - it.w);
+    it.y = VH + 2;
+    ang = deg2rad(200 + Math.random() * 140); // 200°..340° (sin<0)
+  } else if (side === 2) {
+    // Depuis la gauche vers la droite
+    it.x = -it.w;
+    it.y = Math.random() * (VH - it.h);
+    ang = deg2rad(-70 + Math.random() * 140); // -70°..70° (cos>0)
+  } else {
+    // Depuis la droite vers la gauche
+    it.x = VW + 2;
+    it.y = Math.random() * (VH - it.h);
+    ang = deg2rad(110 + Math.random() * 140); // 110°..250° (cos<0)
+  }
+  const sp = (def?.baseSpeed || 120) * it.variation;
+  it.vx = Math.cos(ang) * sp;
+  it.vy = Math.sin(ang) * sp;
+  it.customVel = true;
+  items.push(it);
+}
+
 function processPickup(playerId, it) {
   const player = playerId === 1 ? p1 : p2;
-  const isPoulet = it.type === 'poulet';
+  const isPoulet = (it.type === 'poulet' || it.type === 'angepoulet');
   const isBombe = it.type === 'bombe';
   const other = playerId === 1 ? 2 : 1;
   // Score
   if (playerId === 1) score1 += it.points; else score2 += it.points;
   // Son
-  if (!isPoulet && !isBombe) playItemSound(it.type);
+  if (!isPoulet && !isBombe) playItemSound(it.type, playerId);
   // Effets spéciaux
   if (isPoulet) {
     player.freeTime = Math.max(player.freeTime, CHICKEN_FREE_SEC);
@@ -1153,6 +1451,12 @@ function processPickup(playerId, it) {
     // Si effet poulet actif, annule immédiatement pour redevenir normal
     player.freeTime = 0;
     player.moveToCenterElapsed = player.moveToCenterDur;
+    // Changer le fond à chaque bombe uniquement en mode multi
+    if (fixedWorldMode === 'multi') nextBackground();
+  }
+  if (it.type === 'etoile') {
+    // Boost vitesse x3 pendant 5s
+    player.speedBoostTime = Math.max(player.speedBoostTime || 0, 5.0);
   }
   if (!isPoulet && !isBombe) {
     player.chickenStreak = 0;
@@ -1169,6 +1473,10 @@ function processPickup(playerId, it) {
         else maybeTransformPlayer(p2, stats2, it.type);
       }
     }
+  }
+  // Effet braise: devenir 4x plus gros pendant 5 secondes
+  if (it.type === 'braise') {
+    player.giantTime = Math.max(player.giantTime || 0, 5.0);
   }
   // Historique & stats
   if (playerId === 1) {
@@ -1189,7 +1497,7 @@ function render() {
   ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
 
   // Fond (couvre l'espace virtuel 16:9)
-  const bg = ASSETS["fond"];
+  const bg = getCurrentBackgroundImage();
   if (bg) {
     // Le canvas est 16:9, on peut étirer sur tout l'espace virtuel
     ctx.drawImage(bg, 0, 0, VW, VH);
@@ -1500,6 +1808,8 @@ function drawLoadingOverlay() {
 
 function drawMenu() {
   const modeLabel = soundMode === SOUND_MODE.SFX ? "SFX" : (soundMode === SOUND_MODE.MUSIC ? "Musique" : "Muet");
+  const worldLabelMap = { multi: 'Multi-monde', enfer: 'Enfer', ciel: 'Ciel', espace: 'Espace', cuisine: 'Cuisine', palmier: 'Palmier' };
+  const fixedLabel = worldLabelMap[fixedWorldMode] || 'Multi-monde';
   ctx.save();
   // Background subtle overlay
   ctx.fillStyle = "rgba(0,0,0,0.25)";
@@ -1543,6 +1853,9 @@ function drawMenu() {
   ];
   ctx.fillStyle = "#cbd5e1";
   for (const L of lines) { ctx.fillText(L, leftX + panelPad, ly); ly += lh; }
+  // Affichage du mode monde sélectionné
+  ctx.fillText(`Monde: ${fixedLabel} (F pour changer)`, leftX + panelPad, ly);
+  ly += lh;
 
   ctx.fillStyle = "#e6f1ff";
   ctx.font = "22px Arial";
@@ -1756,10 +2069,29 @@ function frame(ts) {
     keys['d'] = keys['D'] = false;
     developerMode = !developerMode;
   }
+  // World selection via F on menu
+  if (gameState === STATE.MENU && (keys['f'] || keys['F'])) {
+    keys['f'] = keys['F'] = false;
+    cycleFixedWorld();
+    if (fixedWorldMode !== 'multi') {
+      // Choisir un fond correspondant si disponible
+      const idx = Math.max(0, bgImages.findIndex(e => e.id === fixedWorldMode));
+      if (idx >= 0) { bgIndex = idx; setWorldFromId(bgImages[bgIndex]?.id); }
+      else { setWorldFromId(fixedWorldMode); }
+    } else {
+      // Multi: revenir au premier fond (fond.png si présent)
+      bgIndex = 0;
+      setWorldFromId(bgImages[bgIndex]?.id || 'classique');
+    }
+  }
 
-  handleToggles();
-  update(dt);
-  render();
+  try {
+    handleToggles();
+    update(dt);
+    render();
+  } catch (e) {
+    console.error('FRAME ERROR:', e && e.stack ? e.stack : e);
+  }
   requestAnimationFrame(frame);
 }
 
@@ -1783,6 +2115,8 @@ function startOnce() {
   // Charger médias en arrière-plan
   preloadAssets().catch((e)=>console.error('IMG PRELOAD ERR', e)).then(()=>{});
   preloadAudio().catch((e)=>console.error('AUDIO PRELOAD ERR', e));
+  // Découverte des fonds disponibles (fond*.png)
+  discoverBackgrounds().catch((e)=>console.error('BG DISCOVERY ERR', e));
 }
 // Démarrage immédiat sans interaction
 try {
@@ -1790,6 +2124,8 @@ try {
   init();
   preloadAssets().catch((e)=>console.error('IMG PRELOAD ERR', e));
   preloadAudio().catch((e)=>console.error('AUDIO PRELOAD ERR', e));
+  // Découverte des fonds disponibles (fond*.png)
+  discoverBackgrounds().catch((e)=>console.error('BG DISCOVERY ERR', e));
 } catch (_) {
   // si un souci, fallback sur interaction
   document.addEventListener('click', startOnce, { once: true });
