@@ -184,6 +184,8 @@ const ASSETS = Object.create(null); // key -> CanvasImageSource
 let assetsLoaded = false;
 let assetLoad = { total: 0, loaded: 0, current: "", errors: [] };
 let audioLoad = { total: 0, loaded: 0, current: "", errors: [] };
+// Chargement des fonds (fond-*.png) pour affichage de progression
+let bgLoad = { total: 0, loaded: 0, current: "" };
 
 // Variantes de casse utiles (dir conservé, variantes sur le nom)
 function caseVariants(file) {
@@ -317,13 +319,19 @@ async function discoverBackgrounds(maxN = 50) {
     // variantes par thème
     'fond-classique.png','fond-couteau.png','fond-ciel.png','fond-enfer.png','fond-espace.png','fond-cuisine.png','fond-palmier.png'
   ];
+  // Initialiser la progression
+  bgLoad.total = candidates.length;
+  bgLoad.loaded = 0;
+  bgLoad.current = '';
   const found = [];
   for (const name of candidates) {
+    bgLoad.current = name;
     const urls = caseVariants(name);
     const img = await tryLoadExact(urls);
     if (img) {
       found.push({ img, id: inferWorldIdFromName(name) });
     }
+    bgLoad.loaded += 1;
   }
   try { if (DEBUG_ASSETS) console.info('[assets] BG found:', found.map(f=>f.id)); } catch(_){}
   if (found.length === 0 && ASSETS['fond']) {
@@ -1521,7 +1529,7 @@ function render() {
   drawHUD();
 
   // Overlays (menu, pause, game over)
-  if (!assetsLoaded) drawLoadingOverlay();
+  if (!assetsLoaded || (bgLoad && bgLoad.total > 0 && bgLoad.loaded < bgLoad.total)) drawLoadingOverlay();
   else if (gameState === STATE.MENU) drawMenu();
   else if (gameState === STATE.PAUSED) drawPause();
   else if (gameState === STATE.OVER) drawGameOver();
@@ -1779,6 +1787,28 @@ function drawLoadingOverlay() {
     ctx.font = "16px Arial";
     ctx.fillStyle = "#9fb3c8";
     ctx.fillText(`Fichier: ${audioLoad.current}`, VW/2, abarY + barH + 36);
+  }
+
+  // Backgrounds (fonds) section
+  const bpct = bgLoad.total > 0 ? bgLoad.loaded / bgLoad.total : 0;
+  const bbarY = abarY + 100;
+  ctx.font = "22px Arial";
+  ctx.fillStyle = "#e6f1ff";
+  ctx.fillText("Chargement des fonds", VW/2, bbarY - 34);
+  ctx.fillStyle = "#1f2a44";
+  ctx.fillRect(barX, bbarY, barW, barH);
+  ctx.fillStyle = "#a5d8ff";
+  ctx.fillRect(barX, bbarY, Math.floor(barW * bpct), barH);
+  ctx.strokeStyle = "#93a3b3";
+  ctx.strokeRect(barX, bbarY, barW, barH);
+  ctx.font = "18px Arial";
+  ctx.fillStyle = "#cbd5e1";
+  const binfo = `${bgLoad.loaded}/${bgLoad.total} (${Math.round(bpct*100)}%)`;
+  ctx.fillText(binfo, VW/2, bbarY + barH + 12);
+  if (bgLoad.current) {
+    ctx.font = "16px Arial";
+    ctx.fillStyle = "#9fb3c8";
+    ctx.fillText(`Fichier: ${bgLoad.current}`, VW/2, bbarY + barH + 36);
   }
 
   // Erreurs en bas
