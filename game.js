@@ -262,7 +262,6 @@ function setWorldFromId(id) {
   try {
     const SPEC = new Set(['couteau','braise','angepoulet','etoile']);
     items = items.filter(it => !SPEC.has(it.type));
-    plateaus = [];
   } catch (_) {}
   worldId = id || 'classique';
   worldPlayerSpeedMult = 1.0;
@@ -575,6 +574,7 @@ class Player {
     this.moveTargetY = 0;
     // Boost de vitesse temporaire (étoile)
     this.speedBoostTime = 0;  // secondes restantes
+    this.starTime = 0;        // effet étoile: mouvement libre
   }
   get img() { return ASSETS[this.imgKey]; }
   get w() { return Math.round(PLAYER_BASE_W * this.scale); }
@@ -684,7 +684,7 @@ const ITEM_TYPES = [
   { key: "burger",   points:  3, baseSpeed: 140, baseW: 56 },
   { key: "tacos",    points:  2, baseSpeed: 130, baseW: 56 },
   { key: "brocolis", points:  1, baseSpeed: 110, baseW: 50 },
-  { key: "poulet",   points:  5, baseSpeed: 200, baseW: 60 }, // bonus un peu plus grand
+  { key: "poulet",   points:  0, baseSpeed: 200, baseW: 60 }, // bonus un peu plus grand
   { key: "angepoulet", points: 5, baseSpeed: 120, baseW: 90 }, // poulet céleste, plus grand, chute douce
   { key: "etoile",  points:  1, baseSpeed: 160, baseW: 48 }, // bonus vitesse temporaire
   { key: "braise",  points:  0, baseSpeed: 200, baseW: 52 }, // braise (enfer), chute verticale
@@ -841,9 +841,9 @@ function intersects(a, b, pad = COLLISION_PAD) {
 }
 
 function resolveBlockingCollisions(pl) {
-  const pr = pl.rect();
   for (const it of items) {
     if (!it || !it.blocking) continue;
+    let pr = pl.rect();
     const r = { x: it.x, y: it.y, w: it.w, h: it.h };
     if (intersects(pr, r, 0)) {
       const dxLeft = (pr.x + pr.w) - r.x;
@@ -856,7 +856,6 @@ function resolveBlockingCollisions(pl) {
         if (dxLeft < dxRight) pl.x -= dxLeft; else pl.x += dxRight;
       } else {
         if (dyTop < dyBottom) pl.y -= dyTop; else pl.y += dyBottom;
-        // Atterrissage sur le dessus du couteau planté
         if (pr.y < r.y && Math.abs((pr.y + pr.h) - r.y) <= minY + 0.5) { pl.vy = 0; pl.onGround = true; }
       }
     }
@@ -1079,6 +1078,8 @@ function resetGame() {
   p2.baselineY = Math.round(VH - p2.h - BASELINE_MARGIN);
   p1.y = p1.baselineY;
   p2.y = p2.baselineY;
+  p1.x = Math.max(0, Math.min(VW - p1.w, p1.x));
+  p2.x = Math.max(0, Math.min(VW - p2.w, p2.x));
   items = [];
   shots = [];
   plateaus = [];
@@ -1161,7 +1162,8 @@ function update(dt) {
   }
   // Saut (one-shot)
   const j1 = !!(pressedOnce[' '] || pressedOnce['Spacebar'] || pressedOnce['Space']);
-  const j2 = !!(pressedOnce['Shift'] || pressedOnce['ShiftRight']);
+  const j2 = !!(pressedOnce['*'] || pressedOnce['NumpadMultiply']);
+  pressedOnce['*'] = pressedOnce['NumpadMultiply'] = false;
   pressedOnce[' '] = pressedOnce['Spacebar'] = pressedOnce['Space'] = false;
   pressedOnce['Shift'] = pressedOnce['ShiftRight'] = false;
   // Décrémenter les timers
@@ -1172,7 +1174,9 @@ function update(dt) {
   p1.paralyzeTime = Math.max(0, (p1.paralyzeTime || 0) - dt);
   p2.paralyzeTime = Math.max(0, (p2.paralyzeTime || 0) - dt);
   p1.speedBoostTime = Math.max(0, (p1.speedBoostTime || 0) - dt);
+  p1.starTime = Math.max(0, (p1.starTime || 0) - dt);
   p2.speedBoostTime = Math.max(0, (p2.speedBoostTime || 0) - dt);
+  p2.starTime = Math.max(0, (p2.starTime || 0) - dt);
   p1.giantTime = Math.max(0, (p1.giantTime || 0) - dt);
   p2.giantTime = Math.max(0, (p2.giantTime || 0) - dt);
 
@@ -1225,7 +1229,7 @@ function update(dt) {
     if (pl.vy == null) pl.vy = 0;
     if (pl.onGround == null) pl.onGround = true;
     const isPizzaFree = (worldId === 'espace') && (getPlayerTransform(pl) === 'pizza');
-    if (pl.freeTime > 0 || isPizzaFree) {
+    if (pl.freeTime > 0 || isPizzaFree || (pl.starTime||0) > 0) {
       // Pas de gravité durant poulet ou pizza libre en espace
       pl.vy = 0; return;
     }
@@ -1241,7 +1245,7 @@ function update(dt) {
     if (pl.y < 0) { pl.y = 0; }
   }
   applyJumpPhysics(p1, j1);
-  applyJumpPhysics(p2, j2);
+  applyJumpPhysics(p2, j2);\n  // Impulsion directionnelle pendant étoile en espace (sur saut)\n  if (worldId === 'espace') {\n    function starImpulse(pl, jumpPressed, dx, dy){\n      if (!jumpPressed) return;\n      if ((pl.starTime||0) <= 0) return;\n      let ix = dx, iy = dy;\n      if (ix === 0 && iy === 0) { ix = 0; iy = -1; }\n      const mag = Math.hypot(ix, iy) || 1; ix/=mag; iy/=mag;\n      const dist = 140;\n      pl.x = Math.max(0, Math.min(VW - pl.w, pl.x + Math.round(ix * dist)));\n      pl.y = Math.max(0, Math.min(VH - pl.h, pl.y + Math.round(iy * dist)));\n    }\n    starImpulse(p1, j1, dx1, dy1);\n    starImpulse(p2, j2, dx2, dy2);\n  }\n
 
   // Animation de déplacement vers le centre pendant l'effet poulet (sans téléportation)
   function applyChickenMove(pl) {
@@ -1314,7 +1318,7 @@ function update(dt) {
   p2.baselineY = Math.round(VH - p2.h - BASELINE_MARGIN);
 
   // Forcer/faire tomber à la ligne de base si pas de mouvement libre
-  if (p1.freeTime <= 0) {
+  if (p1.freeTime <= 0 && !((p1.starTime||0) > 0)) {
     if (!p1IsPizza) {
       if (!worldAllowAllDirs) {
         if (p1.y < p1.baselineY) p1.y = Math.min(p1.baselineY, p1.y + FALL_SPEED * dt);
@@ -1331,7 +1335,7 @@ function update(dt) {
       p1.angle += dist * 0.12;
     }
   }
-  if (p2.freeTime <= 0) {
+  if (p2.freeTime <= 0 && !((p2.starTime||0) > 0)) {
     if (!p2IsPizza) {
       if (!worldAllowAllDirs) {
         if (p2.y < p2.baselineY) p2.y = Math.min(p2.baselineY, p2.y + FALL_SPEED * dt);
@@ -1349,11 +1353,11 @@ function update(dt) {
 
   // Tacos: sautille (appliquer un offset vertical au repos de baseline)
   // tf1/tf2 déjà calculés ci-dessus
-  if (p1.freeTime <= 0 && !worldAllowAllDirs && hasForm(p1, 'tacos')) {
+  if (p1.freeTime <= 0 && !worldAllowAllDirs && (p1.starTime||0) <= 0 && hasForm(p1, 'tacos')) {
     const hop = Math.max(0, Math.sin(p1.hopPhase)) * HOP_AMP;
     p1.y = p1.baselineY - Math.round(hop);
   }
-  if (p2.freeTime <= 0 && !worldAllowAllDirs && hasForm(p2, 'tacos')) {
+  if (p2.freeTime <= 0 && !worldAllowAllDirs && (p2.starTime||0) <= 0 && hasForm(p2, 'tacos')) {
     const hop = Math.max(0, Math.sin(p2.hopPhase)) * HOP_AMP;
     p2.y = p2.baselineY - Math.round(hop);
   }
@@ -1413,7 +1417,7 @@ function update(dt) {
   // Items update + collisions + nettoyage
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
-    it.update(dt, speedMult * worldFallMult);
+    it.update(dt, speedMult * worldFallMult);\n    // Aimantation vers grande sucette\n    function attractTo(pl, obj){\n      const cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;\n      const tx = pl.x + pl.w/2, ty = pl.y + pl.h/2;\n      const dx = tx - cx, dy = ty - cy;\n      const dist = Math.hypot(dx, dy) || 1;\n      const strength = 600; // px/s vers le joueur\n      const ax = (dx / dist) * strength * dt;\n      const ay = (dy / dist) * strength * dt;\n      obj.x += ax; obj.y += ay;\n    }\n    if (p1 && p1.isBigLollipop) attractTo(p1, it);\n    if (p2 && p2.isBigLollipop) attractTo(p2, it);\n
 
     const r = it.rect();
     // Plateau: collecte automatique
@@ -1567,7 +1571,7 @@ function spawnItemSpace(key) {
 
 function processPickup(playerId, it) {
   const player = playerId === 1 ? p1 : p2;
-  const isPoulet = (it.type === 'poulet' || it.type === 'angepoulet');
+  const isPoulet = (it.type === 'poulet');
   const isBombe = it.type === 'bombe';
   const other = playerId === 1 ? 2 : 1;
   // Score
@@ -1575,9 +1579,8 @@ function processPickup(playerId, it) {
   // Son
   if (!isPoulet && !isBombe) playItemSound(it.type, playerId);
   // Effets spéciaux
-  if (isPoulet) {
+  if (it.type === 'poulet') {
     player.freeTime = Math.max(player.freeTime, CHICKEN_FREE_SEC);
-    // Déplacement doux vers le centre (au lieu de téléportation)
     player.moveToCenterDur = 0.45;
     player.moveToCenterElapsed = 0;
     player.moveStartX = player.x;
@@ -1585,13 +1588,17 @@ function processPickup(playerId, it) {
     player.moveTargetX = Math.max(0, Math.round((VW - player.w) / 2));
     player.moveTargetY = Math.max(0, Math.round((VH - player.h) / 2));
     playExclusiveSfx('poulet', { loop: true, durationSec: CHICKEN_FREE_SEC, volume: 0.65 });
-    player.chickenStreak = (player.chickenStreak || 0) + 1;
-    if (!player.isPoule && !player.hasTransformed && player.chickenStreak >= 3 && ASSETS['rournpoule']) {
-      player.isPoule = true;
-      player.hasTransformed = true;
-      player.imgKey = 'rournpoule';
+  } else if (it.type === 'angepoulet') {
+    if (worldId === 'ciel') {
+      player.freeTime = Math.max(player.freeTime, 10);
+      player.moveToCenterDur = 0.45;
+      player.moveToCenterElapsed = 0;
+      player.moveStartX = player.x;
+      player.moveStartY = player.y;
+      player.moveTargetX = Math.max(0, Math.round((VW - player.w) / 2));
+      player.moveTargetY = Math.max(0, Math.round((VH - player.h) / 2));
+      playExclusiveSfx('poulet', { loop: true, durationSec: 10, volume: 0.65 });
     }
-    // en mode poule: pas de changement de taille sur poulet
   }
   if (isBombe) {
     player.shrinkTime = Math.max(player.shrinkTime, BOMB_SHRINK_SEC);
@@ -1604,8 +1611,9 @@ function processPickup(playerId, it) {
     if (fixedWorldMode === 'multi') nextBackground();
   }
   if (it.type === 'etoile') {
-    // Boost vitesse x3 pendant 5s
+    // Boost vitesse x3 + mouvement libre 5s
     player.speedBoostTime = Math.max(player.speedBoostTime || 0, 5.0);
+    player.starTime = Math.max(player.starTime || 0, 5.0);
   }
   if (it.type === 'sucette') {
     // Apparition d'un plateau pour ce joueur, actif 16s
@@ -1641,10 +1649,12 @@ function processPickup(playerId, it) {
   if (playerId === 1) {
     feed1.unshift(it.type); if (feed1.length > FEED_MAX) feed1.length = FEED_MAX;
     if (stats1 && it.type in stats1) stats1[it.type]++;
+    if (it.type === 'sucette' && stats1 && (stats1['sucette']||0) >= 10) { p1.isBigLollipop = true; }
     maybeTransformPlayer(p1, stats1, it.type);
   } else {
     feed2.unshift(it.type); if (feed2.length > FEED_MAX) feed2.length = FEED_MAX;
     if (stats2 && it.type in stats2) stats2[it.type]++;
+    if (it.type === 'sucette' && stats2 && (stats2['sucette']||0) >= 10) { p2.isBigLollipop = true; }
     maybeTransformPlayer(p2, stats2, it.type);
   }
 }
