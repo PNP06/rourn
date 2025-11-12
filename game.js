@@ -178,6 +178,8 @@ const ASSET_LIST = [
   { key: "etoile", file: "etoile.png", color: "#f5e663" },
   { key: "couteau", file: "couteau.png", color: "#999" },
   { key: "braise", file: "braise.png", color: "#ff6b35" },
+  { key: "sucette", file: "sucette.png", color: "#ff77aa" },
+  { key: "plateau", file: "plateau.png", color: "#cccccc" },
 ];
 
 const ASSETS = Object.create(null); // key -> CanvasImageSource
@@ -256,6 +258,12 @@ function cycleFixedWorld() {
 }
 
 function setWorldFromId(id) {
+  // Nettoyer les objets spécifiques de monde lors du changement
+  try {
+    const SPEC = new Set(['couteau','braise','angepoulet','etoile']);
+    items = items.filter(it => !SPEC.has(it.type));
+    plateaus = [];
+  } catch (_) {}
   worldId = id || 'classique';
   worldPlayerSpeedMult = 1.0;
   worldPlayerScaleMult = 1.0;
@@ -680,6 +688,7 @@ const ITEM_TYPES = [
   { key: "angepoulet", points: 5, baseSpeed: 120, baseW: 90 }, // poulet céleste, plus grand, chute douce
   { key: "etoile",  points:  1, baseSpeed: 160, baseW: 48 }, // bonus vitesse temporaire
   { key: "braise",  points:  0, baseSpeed: 200, baseW: 52 }, // braise (enfer), chute verticale
+  { key: "sucette", points:  0, baseSpeed: 140, baseW: 44 }, // déclenche un plateau
   { key: "bombe",    points: -5, baseSpeed: 220, baseW: 64 }, // piège (légèrement plus grande)
   { key: "couteau",  points:  0, baseSpeed: 260, baseW: 54 }, // dangereux, mouvement diagonal
 ];
@@ -729,12 +738,29 @@ class Item {
       this.y += vy * dt;
       this.x += this.vx * dt;
     }
+    // Gestion couteau planté au sol (monde couteau)
+    if (!this.stuck && this.type === 'couteau' && worldId === 'couteau') {
+      if (this.stickCandidate && (this.y + this.h >= VH - 2)) {
+        // Planter dans le sol
+        this.stuck = true;
+        this.blocking = true;
+        this.stuckTime = 5.0;
+        this.vx = 0; this.vy = 0; this.customVel = false;
+        this.angVel = 0;
+        this.angle = Math.PI; // lame vers le bas
+        this.y = VH - this.h;
+      }
+    }
+    if (this.stuck) {
+      this.stuckTime -= dt;
+      if (this.stuckTime <= 0) this.dead = true;
+    }
     if (this.angVel) this.angle += this.angVel * dt;
   }
   draw(g) {
     const img = this.img;
     if (!img) return;
-    if (this.angVel) {
+    if (this.angVel || Math.abs(this.angle||0) > 1e-3) {
       // Dessin avec rotation (couteau)
       g.save();
       const cx = this.x + this.w / 2;
@@ -812,6 +838,29 @@ function intersects(a, b, pad = COLLISION_PAD) {
     a.y + pad < b.y + b.h - pad &&
     a.y + a.h - pad > b.y + pad
   );
+}
+
+function resolveBlockingCollisions(pl) {
+  const pr = pl.rect();
+  for (const it of items) {
+    if (!it || !it.blocking) continue;
+    const r = { x: it.x, y: it.y, w: it.w, h: it.h };
+    if (intersects(pr, r, 0)) {
+      const dxLeft = (pr.x + pr.w) - r.x;
+      const dxRight = (r.x + r.w) - pr.x;
+      const dyTop = (pr.y + pr.h) - r.y;
+      const dyBottom = (r.y + r.h) - pr.y;
+      const minX = Math.min(dxLeft, dxRight);
+      const minY = Math.min(dyTop, dyBottom);
+      if (minX < minY) {
+        if (dxLeft < dxRight) pl.x -= dxLeft; else pl.x += dxRight;
+      } else {
+        if (dyTop < dyBottom) pl.y -= dyTop; else pl.y += dyBottom;
+        // Atterrissage sur le dessus du couteau planté
+        if (pr.y < r.y && Math.abs((pr.y + pr.h) - r.y) <= minY + 0.5) { pl.vy = 0; pl.onGround = true; }
+      }
+    }
+  }
 }
 
 function inflateRect(r, amount) {
@@ -982,6 +1031,7 @@ let gameState = STATE.MENU;
 let p1, p2; // joueurs
 let items = [];
 let shots = [];
+let plateaus = [];
 let score1 = 0, score2 = 0;
 let timeLeft = GAME_DURATION; // s
 let spawnRate = SPAWN_BASE_RATE; // items/sec
@@ -994,6 +1044,7 @@ let feed2 = []; // derniers items pris par J2 (types)
 let stats1 = null; // compteur par type pour J1
 let stats2 = null; // compteur par type pour J2
 const ALL_ITEM_KEYS = ITEM_TYPES.map(t => t.key);
+let sucetteTimer = 0;
 
 // Mode développeur (off par défaut)
 let developerMode = false;
@@ -1030,6 +1081,7 @@ function resetGame() {
   p2.y = p2.baselineY;
   items = [];
   shots = [];
+  plateaus = [];
   score1 = 0;
   score2 = 0;
   timeLeft = GAME_DURATION;
@@ -1042,6 +1094,7 @@ function resetGame() {
   feed2 = [];
   stats1 = makeEmptyStats();
   stats2 = makeEmptyStats();
+  sucetteTimer = 12 + Math.random() * 16;
 }
 
 function startGame() {
@@ -1106,6 +1159,11 @@ function update(dt) {
     const len = Math.hypot(dx, dy) || 1;
     return [dx / len, dy / len];
   }
+  // Saut (one-shot)
+  const j1 = !!(pressedOnce[' '] || pressedOnce['Spacebar'] || pressedOnce['Space']);
+  const j2 = !!(pressedOnce['Shift'] || pressedOnce['ShiftRight']);
+  pressedOnce[' '] = pressedOnce['Spacebar'] = pressedOnce['Space'] = false;
+  pressedOnce['Shift'] = pressedOnce['ShiftRight'] = false;
   // Décrémenter les timers
   p1.freeTime = Math.max(0, p1.freeTime - dt);
   p2.freeTime = Math.max(0, p2.freeTime - dt);
@@ -1122,18 +1180,20 @@ function update(dt) {
   // Spécial pizza: gauche/droite contrôlent le déplacement le long du bord (périmètre).
   const p1IsPizza = getPlayerTransform(p1) === 'pizza';
   const p2IsPizza = getPlayerTransform(p2) === 'pizza';
+  const p1PizzaFree = (worldId === 'espace') && p1IsPizza;
+  const p2PizzaFree = (worldId === 'espace') && p2IsPizza;
 
   let s1 = 0, s2 = 0;
-  if (p1.freeTime <= 0) {
-    if (p1IsPizza) {
+  if (p1.freeTime <= 0 && !(p1IsPizza && p1PizzaFree)) {
+    if (p1IsPizza && !p1PizzaFree) {
       s1 = Math.sign(dx1);
       dx1 = 0; dy1 = 0; // on gèrera le déplacement périmètre après update
     } else {
       if (!worldAllowAllDirs) dy1 = 0;
     }
   }
-  if (p2.freeTime <= 0) {
-    if (p2IsPizza) {
+  if (p2.freeTime <= 0 && !(p2IsPizza && p2PizzaFree)) {
+    if (p2IsPizza && !p2PizzaFree) {
       s2 = Math.sign(dx2);
       dx2 = 0; dy2 = 0;
     } else {
@@ -1156,6 +1216,32 @@ function update(dt) {
 
   p1.update(dx1, dy1, dt);
   p2.update(dx2, dy2, dt);
+
+  // Physique de saut / gravité (sauf pizza libre en espace et pendant poulet)
+  const JUMP_FORCE = 900;
+  const GRAVITY = 1800;
+  const gravMult = (worldId === 'espace') ? 0.5 : 1.0;
+  function applyJumpPhysics(pl, jumpPressed) {
+    if (pl.vy == null) pl.vy = 0;
+    if (pl.onGround == null) pl.onGround = true;
+    const isPizzaFree = (worldId === 'espace') && (getPlayerTransform(pl) === 'pizza');
+    if (pl.freeTime > 0 || isPizzaFree) {
+      // Pas de gravité durant poulet ou pizza libre en espace
+      pl.vy = 0; return;
+    }
+    if (jumpPressed && (pl.onGround || pl.vy === 0)) {
+      pl.vy = -JUMP_FORCE;
+      pl.onGround = false;
+    }
+    pl.vy += GRAVITY * gravMult * dt;
+    pl.y += pl.vy * dt;
+    // Sol (baseline)
+    pl.baselineY = Math.round(VH - pl.h - BASELINE_MARGIN);
+    if (pl.y > pl.baselineY) { pl.y = pl.baselineY; pl.vy = 0; pl.onGround = true; }
+    if (pl.y < 0) { pl.y = 0; }
+  }
+  applyJumpPhysics(p1, j1);
+  applyJumpPhysics(p2, j2);
 
   // Animation de déplacement vers le centre pendant l'effet poulet (sans téléportation)
   function applyChickenMove(pl) {
@@ -1272,6 +1358,10 @@ function update(dt) {
     p2.y = p2.baselineY - Math.round(hop);
   }
 
+  // Collision contre objets bloquants (ex: couteau planté)
+  resolveBlockingCollisions(p1);
+  resolveBlockingCollisions(p2);
+
   // Spawns
   if (items.length < MAX_ITEMS) {
     spawnAcc += dt * spawnRate;
@@ -1304,24 +1394,64 @@ function update(dt) {
     }
   }
 
+  // Sucette: spawn périodique (~20s)
+  sucetteTimer -= dt;
+  if (sucetteTimer <= 0 && items.length < MAX_ITEMS) {
+    spawnSucette();
+    sucetteTimer = 18 + Math.random() * 8; // 18-26s
+  }
+
+  // Plateaux: diminuer TTL et nettoyer
+  if (plateaus && plateaus.length) {
+    for (let pi = plateaus.length - 1; pi >= 0; pi--) {
+      const p = plateaus[pi];
+      p.ttl -= dt;
+      if (p.ttl <= 0) plateaus.splice(pi, 1);
+    }
+  }
+
   // Items update + collisions + nettoyage
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     it.update(dt, speedMult * worldFallMult);
 
     const r = it.rect();
+    // Plateau: collecte automatique
+    if (plateaus && plateaus.length) {
+      let collected = false;
+      for (const p of plateaus) {
+        if (p.ttl <= 0) continue;
+        const pr = { x: p.x, y: p.y, w: p.w, h: p.h };
+        if (it.type !== 'couteau' && !it.blocking && intersects(r, pr)) {
+          processPickup(p.ownerId, it);
+          items.splice(i, 1);
+          collected = true;
+          break;
+        }
+      }
+      if (collected) continue;
+    }
     // Collisions avec joueurs (couteau est nocif)
     if (intersects(p1.rect(), r)) {
-      if (it.type === 'couteau') { p1.paralyzeTime = Math.max(p1.paralyzeTime || 0, 3.0); items.splice(i, 1); continue; }
+      if (it.type === 'couteau') {
+        if (it.stuck) { /* collision bloquante gérée ailleurs */ }
+        else { p1.paralyzeTime = Math.max(p1.paralyzeTime || 0, 3.0); items.splice(i, 1); }
+        continue;
+      }
       processPickup(1, it); items.splice(i, 1); continue;
     }
     if (intersects(p2.rect(), r)) {
-      if (it.type === 'couteau') { p2.paralyzeTime = Math.max(p2.paralyzeTime || 0, 3.0); items.splice(i, 1); continue; }
+      if (it.type === 'couteau') {
+        if (it.stuck) { /* collision bloquante gérée ailleurs */ }
+        else { p2.paralyzeTime = Math.max(p2.paralyzeTime || 0, 3.0); items.splice(i, 1); }
+        continue;
+      }
       processPickup(2, it); items.splice(i, 1); continue;
     }
     // Sorti de l'écran ? (toutes directions)
+    if (it.dead) { items.splice(i, 1); continue; }
     const oob = (it.y > VH + 10) || (it.y + it.h < -10) || (it.x + it.w < -10) || (it.x > VW + 10);
-    if (oob) items.splice(i, 1);
+    if (oob && !it.stuck) items.splice(i, 1);
   }
 
   // Projectiles update + collisions avec items
@@ -1384,7 +1514,18 @@ function spawnKnife() {
   const def = itemDefByKey('couteau');
   const baseW = def?.baseW || ITEM_BASE_W;
   const x = Math.random() * (VW - baseW);
-  items.push(new Item('couteau', x));
+  const it = new Item('couteau', x);
+  if (worldId === 'couteau') {
+    it.stickCandidate = (Math.random() < 0.10);
+  }
+  items.push(it);
+}
+
+function spawnSucette() {
+  const def = itemDefByKey('sucette');
+  const baseW = def?.baseW || ITEM_BASE_W;
+  const x = Math.random() * (VW - baseW);
+  items.push(new Item('sucette', x));
 }
 
 function spawnItemSpace(key) {
@@ -1466,6 +1607,16 @@ function processPickup(playerId, it) {
     // Boost vitesse x3 pendant 5s
     player.speedBoostTime = Math.max(player.speedBoostTime || 0, 5.0);
   }
+  if (it.type === 'sucette') {
+    // Apparition d'un plateau pour ce joueur, actif 16s
+    const imgP = ASSETS['plateau'];
+    let pw = Math.round(VW * 0.25); // ~25% largeur écran
+    let ph = 40;
+    if (imgP && imgP.width && imgP.height) ph = Math.max(12, Math.round(pw * (imgP.height / imgP.width)));
+    const px = Math.max(0, Math.min(VW - pw, Math.random() * (VW - pw)));
+    const py = Math.max(0, Math.min(VH - ph - 60, Math.random() * (VH - ph - 60)));
+    plateaus.push({ ownerId: playerId, x: Math.round(px), y: Math.round(py), w: pw, h: ph, ttl: 16 });
+  }
   if (!isPoulet && !isBombe) {
     player.chickenStreak = 0;
     if (player.isPoule) {
@@ -1517,6 +1668,19 @@ function render() {
 
   // Items
   for (const it of items) it.draw(ctx);
+
+  // Plateaux actifs (collecteurs)
+  if (plateaus && plateaus.length) {
+    const imgP = ASSETS['plateau'];
+    for (const p of plateaus) {
+      if (p.ttl <= 0) continue;
+      if (imgP) ctx.drawImage(imgP, p.x, p.y, p.w, p.h);
+      else {
+        ctx.fillStyle = 'rgba(200,200,200,0.6)';
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      }
+    }
+  }
 
   // Projectiles
   for (const s of shots) s.draw(ctx);
