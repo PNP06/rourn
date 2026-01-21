@@ -280,8 +280,9 @@ function setWorldFromId(id) {
     worldBraiseSpawnRate = 1.0;
   } else if (worldId === 'espace') {
     worldAllowAllDirs = true;
-    worldPlayerSpeedMult = 0.75;
-    worldFallMult = 0.8;
+    // Monde sans gravité: joueurs plus lents, items qui dérivent lentement
+    worldPlayerSpeedMult = 0.6;
+    worldFallMult = 0.45;
   } else if (worldId === 'ciel') {
     // remapping poulet -> angepoulet géré au spawn, chute normale
   } else if (worldId === 'couteau') {
