@@ -1246,7 +1246,7 @@ function update(dt) {
     if (pl.y < 0) { pl.y = 0; }
   }
   applyJumpPhysics(p1, j1);
-  applyJumpPhysics(p2, j2);\n  // Impulsion directionnelle pendant étoile en espace (sur saut)\n  if (worldId === 'espace') {\n    function starImpulse(pl, jumpPressed, dx, dy){\n      if (!jumpPressed) return;\n      if ((pl.starTime||0) <= 0) return;\n      let ix = dx, iy = dy;\n      if (ix === 0 && iy === 0) { ix = 0; iy = -1; }\n      const mag = Math.hypot(ix, iy) || 1; ix/=mag; iy/=mag;\n      const dist = 140;\n      pl.x = Math.max(0, Math.min(VW - pl.w, pl.x + Math.round(ix * dist)));\n      pl.y = Math.max(0, Math.min(VH - pl.h, pl.y + Math.round(iy * dist)));\n    }\n    starImpulse(p1, j1, dx1, dy1);\n    starImpulse(p2, j2, dx2, dy2);\n  }\n
+  applyJumpPhysics(p2, j2);  // Impulsion directionnelle pendant étoile en espace (sur saut)  if (worldId === 'espace') {    function starImpulse(pl, jumpPressed, dx, dy){      if (!jumpPressed) return;      if ((pl.starTime||0) <= 0) return;      let ix = dx, iy = dy;      if (ix === 0 && iy === 0) { ix = 0; iy = -1; }      const mag = Math.hypot(ix, iy) || 1; ix/=mag; iy/=mag;      const dist = 140;      pl.x = Math.max(0, Math.min(VW - pl.w, pl.x + Math.round(ix * dist)));      pl.y = Math.max(0, Math.min(VH - pl.h, pl.y + Math.round(iy * dist)));    }    starImpulse(p1, j1, dx1, dy1);    starImpulse(p2, j2, dx2, dy2);  }
 
   // Animation de déplacement vers le centre pendant l'effet poulet (sans téléportation)
   function applyChickenMove(pl) {
@@ -1418,7 +1418,7 @@ function update(dt) {
   // Items update + collisions + nettoyage
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
-    it.update(dt, speedMult * worldFallMult);\n    // Aimantation vers grande sucette\n    function attractTo(pl, obj){\n      const cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;\n      const tx = pl.x + pl.w/2, ty = pl.y + pl.h/2;\n      const dx = tx - cx, dy = ty - cy;\n      const dist = Math.hypot(dx, dy) || 1;\n      const strength = 600; // px/s vers le joueur\n      const ax = (dx / dist) * strength * dt;\n      const ay = (dy / dist) * strength * dt;\n      obj.x += ax; obj.y += ay;\n    }\n    if (p1 && p1.isBigLollipop) attractTo(p1, it);\n    if (p2 && p2.isBigLollipop) attractTo(p2, it);\n
+    it.update(dt, speedMult * worldFallMult);    // Aimantation vers grande sucette    function attractTo(pl, obj){      const cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;      const tx = pl.x + pl.w/2, ty = pl.y + pl.h/2;      const dx = tx - cx, dy = ty - cy;      const dist = Math.hypot(dx, dy) || 1;      const strength = 600; // px/s vers le joueur      const ax = (dx / dist) * strength * dt;      const ay = (dy / dist) * strength * dt;      obj.x += ax; obj.y += ay;    }    if (p1 && p1.isBigLollipop) attractTo(p1, it);    if (p2 && p2.isBigLollipop) attractTo(p2, it);
 
     const r = it.rect();
     // Plateau: collecte automatique
