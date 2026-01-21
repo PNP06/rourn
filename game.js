@@ -56,6 +56,11 @@ const TACO_SHOT_SPEED = 180;    // vitesse des projectiles tacos/burger (px/s)
 const MAX_SHOTS = 24;           // sécurité de projectiles simultanés
 const PIZZA_SHOT_INTERVAL = 2.0; // pizza: un tir toutes les ~2 s
 const PIZZA_SHOT_SPEED = 180;    // vitesse des peperoni (px/s)
+// Monde espace (fond-espace): réglages spécifiques
+const SPACE_PLAYER_SPEED_FACTOR = 0.6;   // joueurs plus lents en apesanteur
+const SPACE_ITEM_SPEED_FACTOR = 0.45;    // nourriture se déplace lentement
+const SPACE_STAR_SPEED_MULT = 1.6;       // etoile: vitesse x1.6 pendant le boost espace
+const SPACE_STAR_DURATION = 5.0;         // etoile: 5 secondes
 const FEED_ICON_W = 32;       // largeur icône du feed (derniers items)
 const FEED_ICON_GAP = 6;      // espacement entre icônes du feed
 const FEED_MAX = 3;           // nombre d'items à afficher dans l'historique
@@ -148,7 +153,11 @@ const ASSET = (p) => `./assets/${p}`;
 
 // Liste des assets attendus (fichiers dans assets/)
 const ASSET_LIST = [
-  { key: "fond", file: "fond.png", color: "#1b2a41" },
+  { key: "fond", file: "fond-classique.png", color: "#1b2a41" },
+  // Fonds alternatifs
+  { key: "fond_couteau", file: "fond-couteau.png", color: "#1b2a41" },
+  { key: "fond_enfer", file: "fond-enfer.png", color: "#2b0000" },
+  { key: "fond_espace", file: "fond-espace.png", color: "#001b2b" },
   { key: "rourn1", file: "rourn1.png", color: "#4461cf" },
   { key: "rourn2", file: "rourn2.png", color: "#cf4444" },
   // Transformations visuelles des joueurs
@@ -167,10 +176,17 @@ const ASSET_LIST = [
   { key: "tacos", file: "Tacos.png", color: "#b56576" },
   { key: "brocolis", file: "brocolis.png", color: "#5aa469" },
   { key: "poulet", file: "poulet.png", color: "#ce9461" },
+  // Sprite alternatif pour le poulet après activation
+  { key: "couteau", file: "couteau.png", color: "#ce9461" },
+  // Étape enfer: couteau devient braise, joueurs -> rourn-enfer
+  { key: "braise", file: "braise.png", color: "#cf4444" },
+  { key: "etoile", file: "etoile.png", color: "#ffd166" },
+  { key: "rourn_enfer", file: "rourn-enfer.png", color: "#e11d48" },
   { key: "bombe", file: "bombe.png", color: "#555" },
 ];
 
 const ASSETS = Object.create(null); // key -> CanvasImageSource
+let originalPouletImg = null; // pour restaurer l'image poulet d'origine
 let assetsLoaded = false;
 let assetLoad = { total: 0, loaded: 0, current: "", errors: [] };
 
@@ -204,6 +220,10 @@ function preloadAssets() {
       assetLoad.loaded += 1;
       assetLoad.current = file;
       if (img && img.__placeholder) assetLoad.errors.push(file);
+      // Conserver l'image poulet originale pour restauration ultérieure
+      if (key === 'poulet' && !originalPouletImg && img) {
+        originalPouletImg = img;
+      }
     })
   );
   return Promise.all(promises).then(() => { assetsLoaded = true; });
@@ -220,6 +240,7 @@ const AUDIO_LIST = [
   { key: "pbtb", file: "sound2/pbtb.wav" },
   { key: "bombe", file: "sound2/bombe.wav" },
   { key: "poulet", file: "sound2/poulet.wav" },
+  { key: "etoile", file: "sound2/Son-etoile.wav" },
   { key: "banana", file: "sound3banana/chickenbanana.mp3" },
   { key: "fartprout", file: "fartprout.mp3" },
 ];
@@ -375,6 +396,8 @@ class Player {
     this.tacoTimer = 0;       // accumulateur pour tirs auto (tacos/burger)
     this.tacoNextSalad = true;// alterne salade/tomate
     this.pizzaTimer = 0;      // accumulateur pour tirs auto (pizza)
+    // Espace: boost de vitesse temporaire après étoile
+    this.starBoostTime = 0;   // temps restant du boost étoile (s)
     // Effet poulet: apparence et déplacement doux vers le centre
     this.wingsKey = null;     // 'rourn1ailes' ou 'rourn2ailes'
     this.moveToCenterElapsed = 0;
@@ -399,6 +422,10 @@ class Player {
     let sp = this.speed;
     const tf = getPlayerTransform(this);
     if (tf === "brocolis") sp *= 1.35;
+    // Monde espace: déplacement plus lent par défaut
+    if (spaceMode) sp *= SPACE_PLAYER_SPEED_FACTOR;
+    // Boost étoile en espace
+    if ((this.starBoostTime || 0) > 0) sp *= SPACE_STAR_SPEED_MULT;
     this.x += dx * sp * dt;
     this.y += dy * sp * dt;
     // Pizza: rotation; si hors poulet on utilisera la distance périmètre (gérée après),
@@ -485,15 +512,20 @@ function getItemPoints(key) {
 }
 
 class Item {
-  constructor(typeKey, x) {
+  constructor(typeKey, x, y = undefined, dirX = 0, dirY = 1) {
     const def = ITEM_TYPES.find(t => t.key === typeKey);
     this.type = def.key;
     this.points = def.points;
     this.baseSpeed = def.baseSpeed;
     this.baseW = def.baseW || ITEM_BASE_W;
     this.x = x;
-    this.y = -this.h; // démarre juste au-dessus
+    // Position Y par défaut juste au-dessus si non précisée
+    this.y = (y == null) ? -this.h : y;
     this.variation = 0.9 + Math.random() * 0.2; // petite variation de vitesse
+    // Direction de déplacement (unité approximative, normalisée plus bas)
+    const len = Math.hypot(dirX, dirY) || 1;
+    this.dirX = dirX / len;
+    this.dirY = dirY / len;
   }
   get img() { return ASSETS[this.type]; }
   get w() { return this.baseW; }
@@ -504,8 +536,14 @@ class Item {
   }
   rect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
   update(dt, speedMult) {
-    const vy = this.baseSpeed * this.variation * speedMult;
-    this.y += vy * dt;
+    if (spaceMode) {
+      const sp = this.baseSpeed * this.variation * (speedMult) * SPACE_ITEM_SPEED_FACTOR;
+      this.x += this.dirX * sp * dt;
+      this.y += this.dirY * sp * dt;
+    } else {
+      const vy = this.baseSpeed * this.variation * speedMult;
+      this.y += vy * dt;
+    }
   }
   draw(g) {
     const img = this.img;
@@ -710,6 +748,11 @@ let feed2 = []; // derniers items pris par J2 (types)
 let stats1 = null; // compteur par type pour J1
 let stats2 = null; // compteur par type pour J2
 const ALL_ITEM_KEYS = ITEM_TYPES.map(t => t.key);
+// Fond courant et mode couteau (après poulet)
+let currentBgKey = 'fond';
+let knifeMode = false;
+let hellMode = false; // étape enfer après capture de couteau
+let spaceMode = false; // étape espace après braise
 
 function makeEmptyStats() {
   const o = Object.create(null);
@@ -754,6 +797,20 @@ function resetGame() {
   feed2 = [];
   stats1 = makeEmptyStats();
   stats2 = makeEmptyStats();
+  // Réinitialiser le fond et le mode couteau
+  knifeMode = false;
+  hellMode = false;
+  spaceMode = false;
+  currentBgKey = 'fond';
+  // Restaurer l'image du poulet si on l'avait remplacée
+  if (originalPouletImg) {
+    ASSETS['poulet'] = originalPouletImg;
+  }
+  // Restaurer l'apparence de base des joueurs
+  p1.imgKey = p1.defaultImgKey;
+  p2.imgKey = p2.defaultImgKey;
+  p1.wingsKey = 'rourn1ailes';
+  p2.wingsKey = 'rourn2ailes';
 }
 
 function startGame() {
@@ -817,6 +874,9 @@ function update(dt) {
   p2.freeTime = Math.max(0, p2.freeTime - dt);
   p1.shrinkTime = Math.max(0, p1.shrinkTime - dt);
   p2.shrinkTime = Math.max(0, p2.shrinkTime - dt);
+  // Espace: boost étoile
+  p1.starBoostTime = Math.max(0, (p1.starBoostTime || 0) - dt);
+  p2.starBoostTime = Math.max(0, (p2.starBoostTime || 0) - dt);
 
   // En mode normal (pas poulet): par défaut horizontal uniquement.
   // Spécial pizza: gauche/droite contrôlent le déplacement le long du bord (périmètre).
@@ -824,20 +884,22 @@ function update(dt) {
   const p2IsPizza = getPlayerTransform(p2) === 'pizza';
 
   let s1 = 0, s2 = 0;
-  if (p1.freeTime <= 0) {
-    if (p1IsPizza) {
-      s1 = Math.sign(dx1);
-      dx1 = 0; dy1 = 0; // on gèrera le déplacement périmètre après update
-    } else {
-      dy1 = 0;
+  if (!spaceMode) {
+    if (p1.freeTime <= 0) {
+      if (p1IsPizza) {
+        s1 = Math.sign(dx1);
+        dx1 = 0; dy1 = 0; // on gèrera le déplacement périmètre après update
+      } else {
+        dy1 = 0;
+      }
     }
-  }
-  if (p2.freeTime <= 0) {
-    if (p2IsPizza) {
-      s2 = Math.sign(dx2);
-      dx2 = 0; dy2 = 0;
-    } else {
-      dy2 = 0;
+    if (p2.freeTime <= 0) {
+      if (p2IsPizza) {
+        s2 = Math.sign(dx2);
+        dx2 = 0; dy2 = 0;
+      } else {
+        dy2 = 0;
+      }
     }
   }
 
@@ -925,42 +987,44 @@ function update(dt) {
   p2.baselineY = Math.round(VH - p2.h - BASELINE_MARGIN);
 
   // Forcer/faire tomber à la ligne de base si pas de mouvement libre
-  if (p1.freeTime <= 0) {
-    if (!p1IsPizza) {
-      if (p1.y < p1.baselineY) p1.y = Math.min(p1.baselineY, p1.y + FALL_SPEED * dt);
-      else p1.y = p1.baselineY;
-    } else {
-      // Déplacement périmètre piloté par s1
-      if (p1.perimT == null) p1.perimT = projectPerimeterT(p1);
-      const dist = s1 * p1.speed * dt;
-      const L = perimeterLength(p1);
-      p1.perimT = ((p1.perimT + dist) % L + L) % L;
-      setPosFromPerimeterT(p1, p1.perimT);
-      // Rotation en fonction de la distance parcourue
-      p1.angle += dist * 0.12;
+  if (!spaceMode) {
+    if (p1.freeTime <= 0) {
+      if (!p1IsPizza) {
+        if (p1.y < p1.baselineY) p1.y = Math.min(p1.baselineY, p1.y + FALL_SPEED * dt);
+        else p1.y = p1.baselineY;
+      } else {
+        // Déplacement périmètre piloté par s1
+        if (p1.perimT == null) p1.perimT = projectPerimeterT(p1);
+        const dist = s1 * p1.speed * dt;
+        const L = perimeterLength(p1);
+        p1.perimT = ((p1.perimT + dist) % L + L) % L;
+        setPosFromPerimeterT(p1, p1.perimT);
+        // Rotation en fonction de la distance parcourue
+        p1.angle += dist * 0.12;
+      }
     }
-  }
-  if (p2.freeTime <= 0) {
-    if (!p2IsPizza) {
-      if (p2.y < p2.baselineY) p2.y = Math.min(p2.baselineY, p2.y + FALL_SPEED * dt);
-      else p2.y = p2.baselineY;
-    } else {
-      if (p2.perimT == null) p2.perimT = projectPerimeterT(p2);
-      const dist = s2 * p2.speed * dt;
-      const L = perimeterLength(p2);
-      p2.perimT = ((p2.perimT + dist) % L + L) % L;
-      setPosFromPerimeterT(p2, p2.perimT);
-      p2.angle += dist * 0.12;
+    if (p2.freeTime <= 0) {
+      if (!p2IsPizza) {
+        if (p2.y < p2.baselineY) p2.y = Math.min(p2.baselineY, p2.y + FALL_SPEED * dt);
+        else p2.y = p2.baselineY;
+      } else {
+        if (p2.perimT == null) p2.perimT = projectPerimeterT(p2);
+        const dist = s2 * p2.speed * dt;
+        const L = perimeterLength(p2);
+        p2.perimT = ((p2.perimT + dist) % L + L) % L;
+        setPosFromPerimeterT(p2, p2.perimT);
+        p2.angle += dist * 0.12;
+      }
     }
   }
 
   // Tacos: sautille (appliquer un offset vertical au repos de baseline)
   // tf1/tf2 déjà calculés ci-dessus
-  if (p1.freeTime <= 0 && tf1 === "tacos") {
+  if (!spaceMode && p1.freeTime <= 0 && tf1 === "tacos") {
     const hop = Math.max(0, Math.sin(p1.hopPhase)) * HOP_AMP;
     p1.y = p1.baselineY - Math.round(hop);
   }
-  if (p2.freeTime <= 0 && tf2 === "tacos") {
+  if (!spaceMode && p2.freeTime <= 0 && tf2 === "tacos") {
     const hop = Math.max(0, Math.sin(p2.hopPhase)) * HOP_AMP;
     p2.y = p2.baselineY - Math.round(hop);
   }
@@ -985,8 +1049,12 @@ function update(dt) {
     // Attrapé par J2 ? (burger: plus de zone élargie, on utilise juste la taille accrue)
     if (intersects(p2.rect(), r)) { processPickup(2, it); items.splice(i, 1); continue; }
     // Sorti de l'écran ? (pas de pénalité)
-    if (it.y > VH + 10) {
-      items.splice(i, 1);
+    if (!spaceMode) {
+      if (it.y > VH + 10) items.splice(i, 1);
+    } else {
+      if (r.y + r.h < -10 || r.y > VH + 10 || r.x + r.w < -10 || r.x > VW + 10) {
+        items.splice(i, 1);
+      }
     }
   }
 
@@ -1031,17 +1099,43 @@ function playItemSound(type) {
 
 function spawnItem() {
   const def = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
-  const w = Math.max(1, (ASSETS[def.key]?.width) || ITEM_BASE_W);
   // utiliser la largeur d'affichage prévue (baseW) pour éviter spawn hors bords
   const baseW = def.baseW || ITEM_BASE_W;
-  const x = Math.random() * (VW - baseW);
-  items.push(new Item(def.key, x));
+  if (!spaceMode) {
+    const x = Math.random() * (VW - baseW);
+    items.push(new Item(def.key, x));
+  } else {
+    // Monde espace: spawn depuis un bord aléatoire, direction vers l'intérieur
+    const edge = Math.floor(Math.random() * 4); // 0=top,1=bottom,2=left,3=right
+    let x = 0, y = 0, dx = 0, dy = 0;
+    switch (edge) {
+      case 0: // top -> descend
+        x = Math.random() * (VW - baseW);
+        y = -baseW;
+        dx = 0; dy = 1; break;
+      case 1: // bottom -> monte
+        x = Math.random() * (VW - baseW);
+        y = VH + baseW;
+        dx = 0; dy = -1; break;
+      case 2: // left -> droite
+        x = -baseW;
+        y = Math.random() * (VH - baseW);
+        dx = 1; dy = 0; break;
+      default: // right -> gauche
+        x = VW + baseW;
+        y = Math.random() * (VH - baseW);
+        dx = -1; dy = 0; break;
+    }
+    items.push(new Item(def.key, x, y, dx, dy));
+  }
 }
 
 function processPickup(playerId, it) {
   const player = playerId === 1 ? p1 : p2;
   const isPoulet = it.type === 'poulet';
   const isBombe = it.type === 'bombe';
+  const isBraise = it.type === 'poulet' && ASSETS['poulet'] === ASSETS['braise']; // poulet visuel braise
+  const hadKnifeMode = knifeMode; // état avant cette prise
   const other = playerId === 1 ? 2 : 1;
   // Score
   if (playerId === 1) score1 += it.points; else score2 += it.points;
@@ -1049,22 +1143,76 @@ function processPickup(playerId, it) {
   if (!isPoulet && !isBombe) playItemSound(it.type);
   // Effets spéciaux
   if (isPoulet) {
-    player.freeTime = Math.max(player.freeTime, CHICKEN_FREE_SEC);
-    // Déplacement doux vers le centre (au lieu de téléportation)
-    player.moveToCenterDur = 0.45;
-    player.moveToCenterElapsed = 0;
-    player.moveStartX = player.x;
-    player.moveStartY = player.y;
-    player.moveTargetX = Math.max(0, Math.round((VW - player.w) / 2));
-    player.moveTargetY = Math.max(0, Math.round((VH - player.h) / 2));
-    playExclusiveSfx('poulet', { loop: true, durationSec: CHICKEN_FREE_SEC, volume: 0.65 });
-    player.chickenStreak = (player.chickenStreak || 0) + 1;
-    if (!player.isPoule && !player.hasTransformed && player.chickenStreak >= 3 && ASSETS['rournpoule']) {
-      player.isPoule = true;
-      player.hasTransformed = true;
-      player.imgKey = 'rournpoule';
+    // Monde espace: l'étoile ne donne qu'un boost de vitesse temporaire
+    if (spaceMode) {
+      player.starBoostTime = Math.max(player.starBoostTime || 0, SPACE_STAR_DURATION);
+      if (soundMode === SOUND_MODE.SFX) {
+        playSound("etoile", { loop: false, volume: 0.75 });
+      }
+      // pas d'effet poulet: pas de freeTime, pas de déplacement centre, pas de sons dédiés
+    } else {
+      player.freeTime = Math.max(player.freeTime, CHICKEN_FREE_SEC);
+      // Déplacement doux vers le centre (au lieu de téléportation)
+      player.moveToCenterDur = 0.45;
+      player.moveToCenterElapsed = 0;
+      player.moveStartX = player.x;
+      player.moveStartY = player.y;
+      player.moveTargetX = Math.max(0, Math.round((VW - player.w) / 2));
+      player.moveTargetY = Math.max(0, Math.round((VH - player.h) / 2));
+      playExclusiveSfx('poulet', { loop: true, durationSec: CHICKEN_FREE_SEC, volume: 0.65 });
+      player.chickenStreak = (player.chickenStreak || 0) + 1;
+      if (!player.isPoule && !player.hasTransformed && player.chickenStreak >= 3 && ASSETS['rournpoule']) {
+        player.isPoule = true;
+        player.hasTransformed = true;
+        player.imgKey = 'rournpoule';
+      }
+      // Mode couteau: à la première capture de poulet, remplacer le fond et le sprite poulet
+      if (!knifeMode) {
+        knifeMode = true;
+        // basculer le fond si disponible
+        if (ASSETS['fond_couteau']) {
+          currentBgKey = 'fond_couteau';
+        }
+        // remplacer l'image du poulet par couteau pour les prochains spawns
+        if (ASSETS['couteau']) {
+          ASSETS['poulet'] = ASSETS['couteau'];
+        }
+      }
+      // Étape enfer: si on attrape le poulet alors qu'il est visuellement un couteau (knifeMode déjà actif)
+      else if (hadKnifeMode && !hellMode) {
+        hellMode = true;
+        if (ASSETS['fond_enfer']) currentBgKey = 'fond_enfer';
+        if (ASSETS['braise']) ASSETS['poulet'] = ASSETS['braise'];
+        if (ASSETS['rourn_enfer']) {
+          p1.imgKey = 'rourn_enfer';
+          p2.imgKey = 'rourn_enfer';
+          p1.hasTransformed = true;
+          p2.hasTransformed = true;
+          p1.isPoule = false;
+          p2.isPoule = false;
+          // Désactiver l'overlay ailes pour garder l'apparence enfer
+          p1.wingsKey = null;
+          p2.wingsKey = null;
+        }
+      }
+      // Étape espace: si on attrape la braise (poulet visuel braise)
+      else if (isBraise && hellMode && !spaceMode) {
+        spaceMode = true;
+        if (ASSETS['fond_espace']) currentBgKey = 'fond_espace';
+        if (ASSETS['etoile']) ASSETS['poulet'] = ASSETS['etoile'];
+        // Retour avatars initiaux
+        p1.imgKey = p1.defaultImgKey;
+        p2.imgKey = p2.defaultImgKey;
+        // Réactiver les ailes pour l'effet poulet
+        p1.wingsKey = 'rourn1ailes';
+        p2.wingsKey = 'rourn2ailes';
+        p1.isPoule = false;
+        p2.isPoule = false;
+        p1.hasTransformed = false;
+        p2.hasTransformed = false;
+      }
+      // en mode poule: pas de changement de taille sur poulet
     }
-    // en mode poule: pas de changement de taille sur poulet
   }
   if (isBombe) {
     player.shrinkTime = Math.max(player.shrinkTime, BOMB_SHRINK_SEC);
@@ -1099,7 +1247,7 @@ function render() {
   ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
 
   // Fond (couvre l'espace virtuel 16:9)
-  const bg = ASSETS["fond"];
+  const bg = ASSETS[currentBgKey] || ASSETS["fond"]; // fond courant avec fallback
   if (bg) {
     // Le canvas est 16:9, on peut étirer sur tout l'espace virtuel
     ctx.drawImage(bg, 0, 0, VW, VH);
