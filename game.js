@@ -32,6 +32,7 @@ setVersionTitle();
 const VW = 1280;              // Largeur virtuelle (16:9)
 const VH = 720;               // Hauteur virtuelle (16:9)
 const GAME_DURATION = 130;    // Durée en secondes (2 min 10 s)
+const WIN_SCORE = 100;        // Score qui termine immédiatement la partie
 const PLAYER_SPEED = 300;     // Vitesse des joueurs (px/s)
 const MAX_ITEMS = 60;         // Limite d'items simultanés
 
@@ -61,6 +62,14 @@ const SPACE_PLAYER_SPEED_FACTOR = 0.6;   // joueurs plus lents en apesanteur
 const SPACE_ITEM_SPEED_FACTOR = 0.45;    // nourriture se déplace lentement
 const SPACE_STAR_SPEED_MULT = 1.6;       // etoile: vitesse x1.6 pendant le boost espace
 const SPACE_STAR_DURATION = 5.0;         // etoile: 5 secondes
+const SPACE_STAR_POINTS = 5;             // etoile (dernier monde) vaut 5 points
+const FRITE_POINTS = 0;                  // points directs de la frite (bonus via mini-frites)
+const FRITE_BASE_SPEED = 150;            // vitesse de chute de la frite
+const FRITE_BASE_W = 46;                 // taille de la frite
+const FRITE_SPAWN_INTERVAL = 10;         // apparition forcée d'une frite toutes les 10 s
+const FRITE_SHOT_SPEED = 280;            // vitesse des petites frites
+const FRITE_SHOT_W = 18;                 // taille des petites frites
+const FRITE_SHOT_LIFETIME = 12;          // sécurité: durée max des petites frites (s)
 const FEED_ICON_W = 32;       // largeur icône du feed (derniers items)
 const FEED_ICON_GAP = 6;      // espacement entre icônes du feed
 const FEED_MAX = 3;           // nombre d'items à afficher dans l'historique
@@ -72,6 +81,7 @@ const SPAWN_RATE_INCREMENT = 0.15;  // +0.15 items/sec par palier
 const SPEED_MULT_INC = 0.05;        // +5% vitesse de chute par palier
 const MAX_SPAWN_RATE = 3.5;         // cap du taux de spawn
 const MAX_SPEED_MULT = 2.0;         // cap vitesse chute
+const CHICKEN_SPAWN_INTERVAL = 30;  // apparition forcée d'un poulet toutes les 30 s
 
 // Petites marges pour collisions (AABB plus tolérant)
 const COLLISION_PAD = 4; // px retranchés à chaque bord
@@ -168,6 +178,7 @@ const ASSET_LIST = [
   { key: "tacostomato", file: "Tomato.png", color: "#c0392b" },
   { key: "tacossalad", file: "Salad.png", color: "#27ae60" },
   { key: "pepperoni", file: "peperoni.png", color: "#b33f2a" },
+  { key: "frite", file: "frite.png", color: "#f2c94c" },
   { key: "rourn1ailes", file: "rourn1ailes.png", color: "#8fb9ff" },
   { key: "rourn2ailes", file: "rourn2ailes.png", color: "#ff8fb9" },
   { key: "rournpoule", file: "rournpoule.png", color: "#deb887" },
@@ -503,6 +514,7 @@ const ITEM_TYPES = [
   { key: "tacos",    points:  2, baseSpeed: 130, baseW: 56 },
   { key: "brocolis", points:  1, baseSpeed: 110, baseW: 50 },
   { key: "poulet",   points:  5, baseSpeed: 200, baseW: 60 }, // bonus un peu plus grand
+  { key: "frite",    points:  FRITE_POINTS, baseSpeed: FRITE_BASE_SPEED, baseW: FRITE_BASE_W, forceOnly: true }, // spawn forcé
   { key: "bombe",    points: -5, baseSpeed: 220, baseW: 56 }, // piège
 ];
 
@@ -553,26 +565,42 @@ class Item {
 
 // Projectiles envoyés par le tacos
 class Projectile {
-  constructor(ownerId, kind, x, y, w, h, vx = 0, vy = -TACO_SHOT_SPEED) {
+  constructor(ownerId, kind, x, y, w, h, vx = 0, vy = -TACO_SHOT_SPEED, opts = {}) {
     this.ownerId = ownerId;     // 1 ou 2
     this.kind = kind;           // 'salad' | 'tomato'
     this.x = x; this.y = y;
     this.w = w; this.h = h;
     this.vx = vx; this.vy = vy;
+    this.bouncy = !!opts.bouncy;
+    this.life = opts.life || 0; // 0 = illimité
   }
   get img() {
     if (this.kind === 'salad') return ASSETS['tacossalad'];
     if (this.kind === 'tomato') return ASSETS['tacostomato'];
     if (this.kind === 'pepperoni') return ASSETS['pepperoni'];
+    if (this.kind === 'frite') return ASSETS['frite'];
     return null;
   }
   rect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
-  update(dt) { this.x += this.vx * dt; this.y += this.vy * dt; }
+  update(dt) {
+    this.x += this.vx * dt; this.y += this.vy * dt;
+    if (this.bouncy) {
+      // rebond sur les bords de l'espace virtuel
+      if (this.x < 0) { this.x = 0; this.vx = Math.abs(this.vx); }
+      if (this.x + this.w > VW) { this.x = VW - this.w; this.vx = -Math.abs(this.vx); }
+      if (this.y < 0) { this.y = 0; this.vy = Math.abs(this.vy); }
+      if (this.y + this.h > VH) { this.y = VH - this.h; this.vy = -Math.abs(this.vy); }
+      if (this.life > 0) this.life = Math.max(0, this.life - dt);
+    }
+  }
   draw(g) {
     const img = this.img;
     if (img) g.drawImage(img, this.x, this.y, this.w, this.h);
     else {
-      g.fillStyle = this.kind === 'salad' ? '#27ae60' : '#c0392b';
+      g.fillStyle =
+        this.kind === 'salad' ? '#27ae60' :
+        this.kind === 'frite' ? '#f2c94c' :
+        '#c0392b';
       g.fillRect(this.x, this.y, this.w, this.h);
     }
   }
@@ -741,6 +769,10 @@ let timeLeft = GAME_DURATION; // s
 let spawnRate = SPAWN_BASE_RATE; // items/sec
 let speedMult = 1.0;            // multiplicateur vitesse chute
 let spawnAcc = 0;               // accumulateur de spawn
+let chickenTimer = 0;           // timer pour les apparitions forcées de poulet
+let pendingChickens = 0;        // nombre de poulets à générer dès que possible
+let friteTimer = 0;             // timer pour les frite forcées
+let pendingFrites = 0;          // nombre de frites à générer dès que possible
 let elapsed = 0;                // temps écoulé depuis start
 let lastDiffStep = 0;           // paliers appliqués
 let feed1 = []; // derniers items pris par J1 (types)
@@ -791,6 +823,10 @@ function resetGame() {
   spawnRate = SPAWN_BASE_RATE;
   speedMult = 1.0;
   spawnAcc = 0;
+  chickenTimer = 0;
+  pendingChickens = 0;
+  friteTimer = 0;
+  pendingFrites = 0;
   elapsed = 0;
   lastDiffStep = 0;
   feed1 = [];
@@ -826,6 +862,15 @@ function gameOver() {
   gameState = STATE.OVER;
 }
 
+function maybeEndGameByScore() {
+  if (gameState !== STATE.PLAYING) return false;
+  if (score1 >= WIN_SCORE || score2 >= WIN_SCORE) {
+    gameOver();
+    return true;
+  }
+  return false;
+}
+
 // ---------------------------------
 // Boucle jeu: update + render (RAF)
 // ---------------------------------
@@ -840,6 +885,7 @@ function update(dt) {
   if (timeLeft <= 0) {
     timeLeft = 0;
     gameOver();
+    return;
   }
 
   const step = Math.floor(elapsed / DIFFICULTY_INTERVAL);
@@ -930,7 +976,7 @@ function update(dt) {
   applyChickenMove(p2);
 
   // Tacos: tirs automatiques alternés salade/tomate
-    function tryShootFor(player, id, fire) {
+  function tryShootFor(player, id, fire) {
     const tf = getPlayerTransform(player);
     if ((tf === "tacos" || tf === "burger") && fire) {
       if ((player.tacoTimer || 0) <= 0 && shots.length < MAX_SHOTS) {
@@ -1029,9 +1075,30 @@ function update(dt) {
     p2.y = p2.baselineY - Math.round(hop);
   }
 
+  // Timer d'apparition forcée du poulet
+  chickenTimer += dt;
+  while (chickenTimer >= CHICKEN_SPAWN_INTERVAL) {
+    chickenTimer -= CHICKEN_SPAWN_INTERVAL;
+    pendingChickens++;
+  }
+  // Timer d'apparition forcée de la frite
+  friteTimer += dt;
+  while (friteTimer >= FRITE_SPAWN_INTERVAL) {
+    friteTimer -= FRITE_SPAWN_INTERVAL;
+    pendingFrites++;
+  }
+
   // Spawns
   if (items.length < MAX_ITEMS) {
     spawnAcc += dt * spawnRate;
+    while (pendingChickens > 0 && items.length < MAX_ITEMS) {
+      spawnItem('poulet');
+      pendingChickens--;
+    }
+    while (pendingFrites > 0 && items.length < MAX_ITEMS) {
+      spawnItem('frite');
+      pendingFrites--;
+    }
     while (spawnAcc >= 1 && items.length < MAX_ITEMS) {
       spawnAcc -= 1;
       spawnItem();
@@ -1045,9 +1112,9 @@ function update(dt) {
 
     const r = it.rect();
     // Attrapé par J1 ? (burger: plus de zone élargie, on utilise juste la taille accrue)
-    if (intersects(p1.rect(), r)) { processPickup(1, it); items.splice(i, 1); continue; }
+    if (intersects(p1.rect(), r)) { processPickup(1, it); items.splice(i, 1); if (gameState !== STATE.PLAYING) return; continue; }
     // Attrapé par J2 ? (burger: plus de zone élargie, on utilise juste la taille accrue)
-    if (intersects(p2.rect(), r)) { processPickup(2, it); items.splice(i, 1); continue; }
+    if (intersects(p2.rect(), r)) { processPickup(2, it); items.splice(i, 1); if (gameState !== STATE.PLAYING) return; continue; }
     // Sorti de l'écran ? (pas de pénalité)
     if (!spaceMode) {
       if (it.y > VH + 10) items.splice(i, 1);
@@ -1062,11 +1129,9 @@ function update(dt) {
   for (let si = shots.length - 1; si >= 0; si--) {
     const s = shots[si];
     s.update(dt);
-    // hors écran ? (toutes directions)
-    if (s.y + s.h < -10 || s.y > VH + 10 || s.x + s.w < -10 || s.x > VW + 10) {
-      shots.splice(si, 1);
-      continue;
-    }
+    // hors écran ? (toutes directions) - ignoré pour les frites rebondissantes
+    if (s.bouncy && FRITE_SHOT_LIFETIME > 0 && s.life <= 0) { shots.splice(si, 1); continue; }
+    if (!s.bouncy && (s.y + s.h < -10 || s.y > VH + 10 || s.x + s.w < -10 || s.x > VW + 10)) { shots.splice(si, 1); continue; }
     // collisions avec items
     let hit = false;
     for (let ii = items.length - 1; ii >= 0; ii--) {
@@ -1078,7 +1143,10 @@ function update(dt) {
         break;
       }
     }
-    if (hit) shots.splice(si, 1);
+    if (hit) {
+      shots.splice(si, 1);
+      if (gameState !== STATE.PLAYING) return;
+    }
   }
 }
 
@@ -1097,8 +1165,27 @@ function playItemSound(type) {
   // Pour le poulet, le son de 5 s est géré dans la collision (par joueur)
 }
 
-function spawnItem() {
-  const def = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+function emitFriteBursts(player, ownerId) {
+  const count = 4;
+  for (let i = 0; i < count && shots.length < MAX_SHOTS; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const sp = FRITE_SHOT_SPEED;
+    const vx = Math.cos(ang) * sp;
+    const vy = Math.sin(ang) * sp;
+    const w = FRITE_SHOT_W;
+    const h = FRITE_SHOT_W;
+    const sx = Math.round(player.x + player.w / 2 - w / 2);
+    const sy = Math.round(player.y + player.h / 2 - h / 2);
+    shots.push(new Projectile(ownerId, 'frite', sx, sy, w, h, vx, vy, { bouncy: true, life: FRITE_SHOT_LIFETIME }));
+  }
+}
+
+function spawnItem(forceKey = null) {
+  const pool = ITEM_TYPES.filter(t => !t.forceOnly);
+  const def = forceKey
+    ? ITEM_TYPES.find(t => t.key === forceKey)
+    : (pool.length ? pool[Math.floor(Math.random() * pool.length)] : ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)]);
+  if (!def) return;
   // utiliser la largeur d'affichage prévue (baseW) pour éviter spawn hors bords
   const baseW = def.baseW || ITEM_BASE_W;
   if (!spaceMode) {
@@ -1134,11 +1221,14 @@ function processPickup(playerId, it) {
   const player = playerId === 1 ? p1 : p2;
   const isPoulet = it.type === 'poulet';
   const isBombe = it.type === 'bombe';
+  const isFrite = it.type === 'frite';
   const isBraise = it.type === 'poulet' && ASSETS['poulet'] === ASSETS['braise']; // poulet visuel braise
   const hadKnifeMode = knifeMode; // état avant cette prise
   const other = playerId === 1 ? 2 : 1;
+  const earnedPoints = (spaceMode && isPoulet) ? SPACE_STAR_POINTS : it.points;
   // Score
-  if (playerId === 1) score1 += it.points; else score2 += it.points;
+  if (playerId === 1) score1 += earnedPoints; else score2 += earnedPoints;
+  maybeEndGameByScore();
   // Son
   if (!isPoulet && !isBombe) playItemSound(it.type);
   // Effets spéciaux
@@ -1213,6 +1303,9 @@ function processPickup(playerId, it) {
       }
       // en mode poule: pas de changement de taille sur poulet
     }
+  }
+  if (isFrite) {
+    emitFriteBursts(player, playerId);
   }
   if (isBombe) {
     player.shrinkTime = Math.max(player.shrinkTime, BOMB_SHRINK_SEC);
@@ -1573,11 +1666,12 @@ function drawMenu() {
   let ry = topY + panelPad + 30;
   const icon = 26;
   const rowGap = 28;
-  const entries = [
+const entries = [
     { key: 'pizza', text: "+3 • Roulage périmètre, tir pepperoni (2s)" },
     { key: 'burger', text: "+3 • Tir salade/tomate vers le haut (4s)" },
     { key: 'tacos', text: "+2 • Tir salade/tomate vers le haut (4s)" },
     { key: 'brocolis', text: "+1 • Vitesse +35%" },
+    { key: 'frite', text: "+0 • Libère 4 mini-frites rebondissantes" },
     { key: 'poulet', text: "+5 • Mouvement libre 5s" },
     { key: 'bombe', text: "−5 • Rétrécit 5s" },
   ];
