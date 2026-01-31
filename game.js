@@ -71,7 +71,7 @@ const FRITE_SHOT_SPEED = 280;            // vitesse des petites frites
 const FRITE_SHOT_W = 18;                 // taille des petites frites
 const FRITE_SHOT_LIFETIME = 12;          // sécurité: durée max des petites frites (s)
 // Mini-jeu Mario
-const MARIO_STAR_DELAY = 60;             // apparition de l'étoile spéciale (s) après le début
+const MARIO_STAR_DELAY = 20;             // apparition de l'étoile spéciale (s) dans les 20 premières secondes
 const MARIO_MODE_DURATION = 300;         // durée du mini-jeu (5 min)
 const MARIO_JUMP_SPEED = 520;            // impulsion de saut
 const MARIO_GRAVITY = 1400;              // gravité vers le bas
