@@ -831,6 +831,7 @@ let marioStarSpawned = false;   // l'étoile a-t-elle été générée ?
 let marioStarTaken = false;     // l'étoile a-t-elle été récupérée ?
 let marioMode = false;          // mini-jeu Mario actif ?
 let marioTimeLeft = 0;          // temps restant dans le mini-jeu
+let marioJustEntered = false;   // drapeau pour couper l'update en cours après entrée
 let goombas = [];               // ennemis dans le mini-jeu
 let nextGoombaSpawn = 0;        // timer de spawn des goombas
 let elapsed = 0;                // temps écoulé depuis start
@@ -894,6 +895,7 @@ function resetGame() {
   marioStarTaken = false;
   marioMode = false;
   marioTimeLeft = 0;
+  marioJustEntered = false;
   goombas = [];
   nextGoombaSpawn = 0;
   elapsed = 0;
@@ -1206,6 +1208,7 @@ function update(dt) {
       }
     }
   }
+  if (marioJustEntered) { marioJustEntered = false; return; }
 
   // Projectiles update + collisions avec items
   for (let si = shots.length - 1; si >= 0; si--) {
@@ -1282,6 +1285,7 @@ function spawnGoomba() {
 function enterMarioMode() {
   marioMode = true;
   marioStarTaken = true;
+  marioJustEntered = true;
   marioTimeLeft = MARIO_MODE_DURATION;
   timeLeft = MARIO_MODE_DURATION;
   currentBgKey = 'fond_mario';
