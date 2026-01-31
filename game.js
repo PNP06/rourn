@@ -70,6 +70,16 @@ const FRITE_SPAWN_INTERVAL = 10;         // apparition forcée d'une frite toute
 const FRITE_SHOT_SPEED = 280;            // vitesse des petites frites
 const FRITE_SHOT_W = 18;                 // taille des petites frites
 const FRITE_SHOT_LIFETIME = 12;          // sécurité: durée max des petites frites (s)
+// Mini-jeu Mario
+const MARIO_STAR_DELAY = 60;             // apparition de l'étoile spéciale (s) après le début
+const MARIO_MODE_DURATION = 300;         // durée du mini-jeu (5 min)
+const MARIO_JUMP_SPEED = 520;            // impulsion de saut
+const MARIO_GRAVITY = 1400;              // gravité vers le bas
+const MARIO_GOOMBA_SPEED = 180;          // vitesse de déplacement des Goombas
+const MARIO_GOOMBA_W = 60;               // largeur cible des Goombas
+const MARIO_GOOMBA_INTERVAL = 2.2;       // intervalle moyen d'apparition des Goombas
+const MARIO_GOOMBA_JITTER = 1.0;         // aléa sur l'intervalle
+const MARIO_GOOMBA_POINTS = 10;          // points gagnés par Goomba écrasé
 const FEED_ICON_W = 32;       // largeur icône du feed (derniers items)
 const FEED_ICON_GAP = 6;      // espacement entre icônes du feed
 const FEED_MAX = 3;           // nombre d'items à afficher dans l'historique
@@ -170,6 +180,8 @@ const ASSET_LIST = [
   { key: "fond_espace", file: "fond-espace.png", color: "#001b2b" },
   { key: "rourn1", file: "rourn1.png", color: "#4461cf" },
   { key: "rourn2", file: "rourn2.png", color: "#cf4444" },
+  { key: "rourn1Mario", file: "rourn1Mario.png", color: "#fca311" },
+  { key: "rourn2Mario", file: "rourn2Mario.png", color: "#f43f5e" },
   // Transformations visuelles des joueurs
   { key: "rourntacos", file: "rourntacos.png", color: "#b56576" },
   { key: "rournpizza", file: "rournpizza.png", color: "#d4a373" },
@@ -179,6 +191,7 @@ const ASSET_LIST = [
   { key: "tacossalad", file: "Salad.png", color: "#27ae60" },
   { key: "pepperoni", file: "peperoni.png", color: "#b33f2a" },
   { key: "frite", file: "frite.png", color: "#f2c94c" },
+  { key: "etoileMario", file: "etoileMario.png", color: "#ffd166" },
   { key: "rourn1ailes", file: "rourn1ailes.png", color: "#8fb9ff" },
   { key: "rourn2ailes", file: "rourn2ailes.png", color: "#ff8fb9" },
   { key: "rournpoule", file: "rournpoule.png", color: "#deb887" },
@@ -193,6 +206,8 @@ const ASSET_LIST = [
   { key: "braise", file: "braise.png", color: "#cf4444" },
   { key: "etoile", file: "etoile.png", color: "#ffd166" },
   { key: "rourn_enfer", file: "rourn-enfer.png", color: "#e11d48" },
+  { key: "fond_mario", file: "fond-mario.jpg", color: "#1e2a44" },
+  { key: "goomba", file: "goomba.png", color: "#9c6a3a" },
   { key: "bombe", file: "bombe.png", color: "#555" },
 ];
 
@@ -352,7 +367,7 @@ const PREVENT_KEYS = new Set([
   "ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Spacebar",
   "PageUp","PageDown","Home","End",
   // On ajoute nos touches de jeu pour éviter des effets de scroll sur certains OS
-  "z","q","s","d","a","A","Z","Q","S","D","p","P","r","R","m","M","e","E","Enter","Escape"
+  "z","q","s","d","a","w","A","Z","Q","S","D","W","p","P","r","R","m","M","e","E","Enter","Escape"
 ]);
 
 function onKeyDown(e) {
@@ -417,6 +432,9 @@ class Player {
     this.moveStartY = 0;
     this.moveTargetX = 0;
     this.moveTargetY = 0;
+    // Mini-jeu: physique simple (saut)
+    this.vy = 0;
+    this.onGround = true;
   }
   get img() { return ASSETS[this.imgKey]; }
   get w() { return Math.round(PLAYER_BASE_W * this.scale); }
@@ -514,6 +532,7 @@ const ITEM_TYPES = [
   { key: "tacos",    points:  2, baseSpeed: 130, baseW: 56 },
   { key: "brocolis", points:  1, baseSpeed: 110, baseW: 50 },
   { key: "poulet",   points:  5, baseSpeed: 200, baseW: 60 }, // bonus un peu plus grand
+  { key: "etoileMario", points: 0, baseSpeed: 160, baseW: 58, forceOnly: true }, // déclenche le mini-jeu
   { key: "frite",    points:  FRITE_POINTS, baseSpeed: FRITE_BASE_SPEED, baseW: FRITE_BASE_W, forceOnly: true }, // spawn forcé
   { key: "bombe",    points: -5, baseSpeed: 220, baseW: 56 }, // piège
 ];
@@ -601,6 +620,40 @@ class Projectile {
         this.kind === 'salad' ? '#27ae60' :
         this.kind === 'frite' ? '#f2c94c' :
         '#c0392b';
+      g.fillRect(this.x, this.y, this.w, this.h);
+    }
+  }
+}
+
+class Goomba {
+  constructor(dir = 1) {
+    this.dir = dir >= 0 ? 1 : -1;
+    this.speed = MARIO_GOOMBA_SPEED * (0.9 + Math.random() * 0.2);
+    this.baseW = MARIO_GOOMBA_W;
+    const w = this.w;
+    this.x = this.dir > 0 ? -w - 10 : VW + 10;
+    this.y = Math.max(0, VH - this.h - BASELINE_MARGIN);
+  }
+  get img() { return ASSETS['goomba']; }
+  get w() {
+    const img = this.img;
+    if (img && img.width && img.height) return Math.max(10, Math.round(this.baseW));
+    return this.baseW;
+  }
+  get h() {
+    const img = this.img;
+    if (img && img.width && img.height) return Math.max(10, Math.round(this.baseW * (img.height / img.width)));
+    return this.baseW;
+  }
+  rect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
+  update(dt) {
+    this.x += this.dir * this.speed * dt;
+  }
+  draw(g) {
+    const img = this.img;
+    if (img) g.drawImage(img, this.x, this.y, this.w, this.h);
+    else {
+      g.fillStyle = "#9c6a3a";
       g.fillRect(this.x, this.y, this.w, this.h);
     }
   }
@@ -773,6 +826,13 @@ let chickenTimer = 0;           // timer pour les apparitions forcées de poulet
 let pendingChickens = 0;        // nombre de poulets à générer dès que possible
 let friteTimer = 0;             // timer pour les frite forcées
 let pendingFrites = 0;          // nombre de frites à générer dès que possible
+let marioStarTimer = 0;         // timer avant apparition de l'étoile Mario
+let marioStarSpawned = false;   // l'étoile a-t-elle été générée ?
+let marioStarTaken = false;     // l'étoile a-t-elle été récupérée ?
+let marioMode = false;          // mini-jeu Mario actif ?
+let marioTimeLeft = 0;          // temps restant dans le mini-jeu
+let goombas = [];               // ennemis dans le mini-jeu
+let nextGoombaSpawn = 0;        // timer de spawn des goombas
 let elapsed = 0;                // temps écoulé depuis start
 let lastDiffStep = 0;           // paliers appliqués
 let feed1 = []; // derniers items pris par J1 (types)
@@ -805,6 +865,8 @@ function resetGame() {
   p1.scale = 1; p2.scale = 1;
   p1.freeTime = 0; p2.freeTime = 0;
   p1.shrinkTime = 0; p2.shrinkTime = 0;
+  p1.vy = 0; p2.vy = 0;
+  p1.onGround = true; p2.onGround = true;
   p1.isPoule = false; p2.isPoule = false;
   p1.hasTransformed = false; p2.hasTransformed = false;
   p1.chickenStreak = 0; p2.chickenStreak = 0;
@@ -827,6 +889,13 @@ function resetGame() {
   pendingChickens = 0;
   friteTimer = 0;
   pendingFrites = 0;
+  marioStarTimer = 0;
+  marioStarSpawned = false;
+  marioStarTaken = false;
+  marioMode = false;
+  marioTimeLeft = 0;
+  goombas = [];
+  nextGoombaSpawn = 0;
   elapsed = 0;
   lastDiffStep = 0;
   feed1 = [];
@@ -878,6 +947,10 @@ let lastTs = performance.now();
 
 function update(dt) {
   if (gameState !== STATE.PLAYING) return;
+  if (marioMode) {
+    updateMarioMode(dt);
+    return;
+  }
 
   // Temps et difficulté
   elapsed += dt;
@@ -1075,6 +1148,15 @@ function update(dt) {
     p2.y = p2.baselineY - Math.round(hop);
   }
 
+  // Apparition unique de l'étoile Mario
+  if (!marioStarSpawned && !marioStarTaken) {
+    marioStarTimer += dt;
+    if (marioStarTimer >= MARIO_STAR_DELAY && items.length < MAX_ITEMS) {
+      spawnItem('etoileMario');
+      marioStarSpawned = true;
+    }
+  }
+
   // Timer d'apparition forcée du poulet
   chickenTimer += dt;
   while (chickenTimer >= CHICKEN_SPAWN_INTERVAL) {
@@ -1180,6 +1262,129 @@ function emitFriteBursts(player, ownerId) {
   }
 }
 
+function consumePressed(keysList) {
+  for (const k of keysList) {
+    if (pressedOnce[k]) {
+      pressedOnce[k] = false;
+      return true;
+    }
+  }
+  return false;
+}
+
+function spawnGoomba() {
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  goombas.push(new Goomba(dir));
+  const jitter = (Math.random() * 2 - 1) * MARIO_GOOMBA_JITTER;
+  nextGoombaSpawn = Math.max(0.6, MARIO_GOOMBA_INTERVAL + jitter);
+}
+
+function enterMarioMode() {
+  marioMode = true;
+  marioStarTaken = true;
+  marioTimeLeft = MARIO_MODE_DURATION;
+  timeLeft = MARIO_MODE_DURATION;
+  currentBgKey = 'fond_mario';
+  // Couper les items et projectiles existants
+  items = [];
+  shots = [];
+  goombas = [];
+  nextGoombaSpawn = 0.5;
+  // Réinitialiser les états spéciaux pour ce mode
+  knifeMode = false;
+  hellMode = false;
+  spaceMode = false;
+  // Repositionner les joueurs et réinitialiser leur physique
+  const positions = [Math.round(VW * 0.3), Math.round(VW * 0.7)];
+  const players = [p1, p2];
+  players.forEach((pl, idx) => {
+    const marioKey = idx === 0 ? 'rourn1Mario' : 'rourn2Mario';
+    if (ASSETS[marioKey]) pl.imgKey = marioKey;
+    pl.wingsKey = null;
+    pl.vy = 0;
+    pl.onGround = true;
+    pl.baselineY = Math.round(VH - pl.h - BASELINE_MARGIN);
+    pl.y = pl.baselineY;
+    pl.x = Math.max(0, Math.min(VW - pl.w, positions[idx] - Math.round(pl.w / 2)));
+  });
+}
+
+function handleMarioJump(player, keysList) {
+  if (!player.onGround) return;
+  if (!consumePressed(keysList)) return;
+  player.vy = -MARIO_JUMP_SPEED;
+  player.onGround = false;
+}
+
+function updateMarioMode(dt) {
+  marioTimeLeft = Math.max(0, marioTimeLeft - dt);
+  timeLeft = marioTimeLeft;
+  if (marioTimeLeft <= 0) {
+    gameOver();
+    return;
+  }
+
+  // Jumps (Z/W pour J1, flèche haut pour J2)
+  handleMarioJump(p1, ["z", "Z", "w", "W"]);
+  handleMarioJump(p2, ["ArrowUp"]);
+
+  // Physique verticale
+  const players = [p1, p2];
+  players.forEach((pl) => {
+    pl.vy += MARIO_GRAVITY * dt;
+    pl.y += pl.vy * dt;
+    const groundY = Math.round(VH - pl.h - BASELINE_MARGIN);
+    if (pl.y >= groundY) {
+      pl.y = groundY;
+      pl.vy = 0;
+      pl.onGround = true;
+    } else {
+      pl.onGround = false;
+    }
+  });
+
+  // Spawn Goombas
+  nextGoombaSpawn -= dt;
+  if (nextGoombaSpawn <= 0) spawnGoomba();
+
+  // Update Goombas + collisions
+  for (let i = goombas.length - 1; i >= 0; i--) {
+    const g = goombas[i];
+    g.update(dt);
+    // hors écran -> supprimer
+    if (g.x < -g.w - 20 || g.x > VW + 20) {
+      goombas.splice(i, 1);
+      continue;
+    }
+    const gr = g.rect();
+    const stompTolerance = g.h * 0.6;
+    const tests = [
+      { player: p1, id: 1 },
+      { player: p2, id: 2 },
+    ];
+    let removed = false;
+    for (const { player, id } of tests) {
+      const pr = player.rect();
+      if (!intersects(pr, gr)) continue;
+      const feet = pr.y + pr.h;
+      const falling = player.vy > 0;
+      const above = feet >= gr.y && pr.y < gr.y + stompTolerance;
+      if (falling && above) {
+        goombas.splice(i, 1);
+        if (id === 1) score1 += MARIO_GOOMBA_POINTS; else score2 += MARIO_GOOMBA_POINTS;
+        maybeEndGameByScore();
+        if (gameState !== STATE.PLAYING) return;
+        // petit rebond
+        player.vy = -MARIO_JUMP_SPEED * 0.6;
+        player.onGround = false;
+        removed = true;
+        break;
+      }
+    }
+    if (removed) continue;
+  }
+}
+
 function spawnItem(forceKey = null) {
   const pool = ITEM_TYPES.filter(t => !t.forceOnly);
   const def = forceKey
@@ -1222,6 +1427,7 @@ function processPickup(playerId, it) {
   const isPoulet = it.type === 'poulet';
   const isBombe = it.type === 'bombe';
   const isFrite = it.type === 'frite';
+  const isMarioStar = it.type === 'etoileMario';
   const isBraise = it.type === 'poulet' && ASSETS['poulet'] === ASSETS['braise']; // poulet visuel braise
   const hadKnifeMode = knifeMode; // état avant cette prise
   const other = playerId === 1 ? 2 : 1;
@@ -1231,6 +1437,18 @@ function processPickup(playerId, it) {
   maybeEndGameByScore();
   // Son
   if (!isPoulet && !isBombe) playItemSound(it.type);
+  if (isMarioStar && !marioStarTaken) {
+    if (soundMode === SOUND_MODE.SFX) playSound("etoile", { loop: false, volume: 0.8 });
+    if (playerId === 1) {
+      feed1.unshift(it.type); if (feed1.length > FEED_MAX) feed1.length = FEED_MAX;
+      if (stats1 && it.type in stats1) stats1[it.type]++;
+    } else {
+      feed2.unshift(it.type); if (feed2.length > FEED_MAX) feed2.length = FEED_MAX;
+      if (stats2 && it.type in stats2) stats2[it.type]++;
+    }
+    enterMarioMode();
+    return;
+  }
   // Effets spéciaux
   if (isPoulet) {
     // Monde espace: l'étoile ne donne qu'un boost de vitesse temporaire
@@ -1350,11 +1568,13 @@ function render() {
     ctx.fillRect(0, 0, VW, VH);
   }
 
-  // Items
-  for (const it of items) it.draw(ctx);
-
-  // Projectiles
-  for (const s of shots) s.draw(ctx);
+  // Items / projectiles ou Goombas (mini-jeu)
+  if (!marioMode) {
+    for (const it of items) it.draw(ctx);
+    for (const s of shots) s.draw(ctx);
+  } else {
+    for (const g of goombas) g.draw(ctx);
+  }
 
   // Joueurs
   if (p1) p1.draw(ctx);
@@ -1390,6 +1610,12 @@ function drawHUD() {
   ctx.textAlign = "center";
   ctx.fillStyle = timeLeft <= 10 ? "#ffd166" : "#e6f1ff";
   ctx.fillText(formatTime(timeLeft), VW / 2, 12);
+  if (marioMode) {
+    ctx.font = "20px Arial";
+    ctx.fillStyle = "#ffd166";
+    ctx.fillText("Mode Mario: sautez sur les Goombas !", VW / 2, 42);
+    ctx.font = "28px Arial";
+  }
 
   // Feeds des 3 derniers items (icônes)
   drawFeedLeft();
