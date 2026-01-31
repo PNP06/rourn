@@ -1191,7 +1191,9 @@ function update(dt) {
 
   // Items update + collisions + nettoyage
   for (let i = items.length - 1; i >= 0; i--) {
+    if (marioJustEntered) break; // star Mario vient d'être prise: sortir proprement
     const it = items[i];
+    if (!it) continue;
     it.update(dt, speedMult);
 
     const r = it.rect();
@@ -1199,6 +1201,7 @@ function update(dt) {
     if (intersects(p1.rect(), r)) { processPickup(1, it); items.splice(i, 1); if (gameState !== STATE.PLAYING) return; continue; }
     // Attrapé par J2 ? (burger: plus de zone élargie, on utilise juste la taille accrue)
     if (intersects(p2.rect(), r)) { processPickup(2, it); items.splice(i, 1); if (gameState !== STATE.PLAYING) return; continue; }
+    if (marioJustEntered) break; // éviter de continuer à parcourir après reset des items
     // Sorti de l'écran ? (pas de pénalité)
     if (!spaceMode) {
       if (it.y > VH + 10) items.splice(i, 1);
