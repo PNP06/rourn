@@ -71,7 +71,7 @@ const FRITE_SHOT_SPEED = 280;            // vitesse des petites frites
 const FRITE_SHOT_W = 18;                 // taille des petites frites
 const FRITE_SHOT_LIFETIME = 12;          // sécurité: durée max des petites frites (s)
 // Mini-jeu Mario
-const MARIO_STAR_DELAY = 20;             // apparition de l'étoile spéciale (s) dans les 20 premières secondes
+const MARIO_STAR_DELAY = 20;             // apparition de l'étoile spéciale (s) après l'entrée en monde espace
 const MARIO_MODE_DURATION = 300;         // durée du mini-jeu (5 min)
 const MARIO_JUMP_SPEED = 520;            // impulsion de saut
 const MARIO_GRAVITY = 1400;              // gravité vers le bas
@@ -1150,8 +1150,8 @@ function update(dt) {
     p2.y = p2.baselineY - Math.round(hop);
   }
 
-  // Apparition unique de l'étoile Mario
-  if (!marioStarSpawned && !marioStarTaken) {
+  // Apparition unique de l'étoile Mario (déclenchée en monde espace)
+  if (spaceMode && !marioStarSpawned && !marioStarTaken) {
     marioStarTimer += dt;
     if (marioStarTimer >= MARIO_STAR_DELAY && items.length < MAX_ITEMS) {
       spawnItem('etoileMario');
@@ -1513,6 +1513,7 @@ function processPickup(playerId, it) {
       // Étape espace: si on attrape la braise (poulet visuel braise)
       else if (isBraise && hellMode && !spaceMode) {
         spaceMode = true;
+        if (!marioStarSpawned && !marioStarTaken) marioStarTimer = 0;
         if (ASSETS['fond_espace']) currentBgKey = 'fond_espace';
         if (ASSETS['etoile']) ASSETS['poulet'] = ASSETS['etoile'];
         // Retour avatars initiaux
